@@ -1,0 +1,250 @@
+name: Packages
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The whole test suite runs once here. The Linux package jobs do not repeat
+  # it; the macOS jobs do, because macOS has its own code paths.
+  checks:
+    name: Checks (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select stable Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup component add rustfmt clippy
+      - name: Check the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(cargo metadata --no-deps --locked --format-version 1 |
+            jq -r '.packages[] | select(.name == "cheesecloth") | .version')
+          # v<version>, maybe with a suffix such as "pre0" or "-rc1".
+          suffix=${TAG#"v$version"}
+          if [[ "$suffix" == "$TAG" || "$suffix" =~ ^[0-9.] ]]; then
+            echo "::error::tag $TAG does not match version $version"
+            exit 1
+          fi
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked --workspace
+      - name: Docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --workspace --no-deps
+
+  # The oldest Rust in `rust-version` must still build everything.
+  msrv:
+    name: Minimum Rust version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the minimum Rust
+        run: |
+          version=$(cargo metadata --no-deps --locked --format-version 1 |
+            jq -r '.packages[] | select(.name == "cheesecloth") | .rust_version')
+          rustup toolchain install "$version" --profile minimal --no-self-update
+          echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build
+        run: cargo check --locked --workspace --all-targets
+
+  # Security advisories, licenses and sources of the dependencies (deny.toml).
+  deny:
+    name: Dependencies
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+        with:
+          command: check
+
+  macos:
+    name: macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select stable Rust
+        run: rustup update stable --no-self-update
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build
+        run: cargo build --release --locked -p cheesecloth
+      # In the debug profile, like the checks job: it builds faster than the
+      # release profile with LTO, and turns on debug assertions.
+      - name: Test
+        run: cargo test --locked --workspace
+      - name: Test macOS userspace WireGuard
+        timeout-minutes: 5
+        run: |
+          cargo test --locked -p cheesecloth-wg \
+            --features macos-integration --test macos_userspace \
+            --config 'target."cfg(target_os = \"macos\")".runner = ["sudo", "-n"]' \
+            -- --nocapture
+      - name: Build installer
+        run: bash packaging/macos/build.sh
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: cheesecloth-macos-${{ matrix.arch }}
+          path: dist/*.pkg
+          if-no-files-found: error
+          compression-level: 0
+
+  debian:
+    name: Debian 13 (amd64)
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    timeout-minutes: 45
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install build dependencies
+        run: |
+          printf '%s\n' 'deb http://deb.debian.org/debian trixie-backports main' > /etc/apt/sources.list.d/backports.list
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential debhelper git ca-certificates procps \
+            cargo/trixie-backports rustc/trixie-backports
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The checks job runs the tests on Linux.
+      - name: Build package
+        env:
+          DEB_BUILD_OPTIONS: nocheck
+        run: |
+          dpkg-buildpackage -us -uc -b -jauto
+          mkdir -p dist
+          cp ../cheesecloth*.deb dist/
+      - name: Check package payload
+        run: |
+          dpkg-deb --info dist/cheesecloth_*.deb
+          dpkg-deb --extract dist/cheesecloth_*.deb "$RUNNER_TEMP/package"
+          "$RUNNER_TEMP/package/usr/bin/cheesecloth" --version
+          test -f "$RUNNER_TEMP/package/usr/lib/systemd/system/cheesecloth.service"
+          test -f "$RUNNER_TEMP/package/etc/default/cheesecloth"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: cheesecloth-debian13-amd64
+          path: dist/*.deb
+          if-no-files-found: error
+          compression-level: 0
+
+  arch:
+    name: Arch Linux (x86_64)
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 45
+    steps:
+      - name: Install build dependencies
+        run: pacman -Syu --noconfirm --needed git rust openresolv
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The checks job runs the tests on Linux.
+      - name: Build package
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- bash -c 'cd "$1/packaging/arch" && makepkg --noconfirm --nocheck' bash "$GITHUB_WORKSPACE"
+          mkdir -p dist
+          cp packaging/arch/cheesecloth-*.pkg.tar.zst dist/
+      - name: Check package payload
+        run: |
+          pacman -Qip dist/cheesecloth-*.pkg.tar.zst
+          mkdir -p "$RUNNER_TEMP/package"
+          tar -xf dist/cheesecloth-[0-9]*.pkg.tar.zst -C "$RUNNER_TEMP/package"
+          "$RUNNER_TEMP/package/usr/bin/cheesecloth" --version
+          test -f "$RUNNER_TEMP/package/usr/lib/systemd/system/cheesecloth.service"
+          test -f "$RUNNER_TEMP/package/etc/default/cheesecloth"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: cheesecloth-arch-x86_64
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [checks, msrv, deny, macos, debian, arch]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          pattern: cheesecloth-*
+          merge-multiple: true
+      - name: Attach packages to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          ls -l
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" -- * --clobber
+          else
+            # Only a plain vX.Y.Z tag is a full release; a suffix makes a
+            # prerelease.
+            flags=()
+            [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || flags+=(--prerelease)
+            gh release create "$TAG" --verify-tag --generate-notes "${flags[@]}" -- *
+          fi

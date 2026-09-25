@@ -1,0 +1,17 @@
+# Builds cheesecloth for Linux (musl) and packages it with the tools the
+# end-to-end lab uses. Build from the repository root:
+#   podman build -f tests/e2e/Containerfile -t localhost/cheesecloth-e2e .
+FROM docker.io/library/rust:1-alpine AS build
+RUN apk add --no-cache musl-dev
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --locked -p cheesecloth -j 2 \
+    && cp target/release/cheesecloth /cheesecloth
+
+FROM docker.io/library/alpine:3
+RUN apk add --no-cache wireguard-tools iproute2 iproute2-tc nftables iputils openresolv \
+    conntrack-tools coreutils miniupnpd-nftables
+COPY --from=build /cheesecloth /usr/local/bin/cheesecloth
+CMD ["tail", "-f", "/dev/null"]

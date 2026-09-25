@@ -1,0 +1,18 @@
+Source: cheesecloth
+Section: net
+Priority: optional
+Maintainer: Jonathan Anderson <janderson@janderson.ca>
+Build-Depends: debhelper-compat (= 13), cargo (>= 1.91), rustc (>= 1.91),
+ procps <!nocheck>
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: cheesecloth
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends},
+ systemd-resolved | resolvconf | openresolv
+Suggests: wireguard-tools
+Description: lightweight, loose mesh: a peer-to-peer WireGuard cluster
+ cheesecloth joins machines into a WireGuard mesh with no external services.
+ Members agree on membership through authenticated CASPaxos. Relays carry
+ control messages; WireGuard traffic uses direct paths and NAT traversal.

@@ -1,0 +1,34 @@
+# Dependency policy, checked in CI by cargo-deny:
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+
+[advisories]
+# Security advisories fail the check for every crate. An unmaintained crate
+# fails it only as a direct dependency, where we can replace it.
+unmaintained = "workspace"
+yanked = "deny"
+
+[licenses]
+# Only licenses that allow shipping the binary under MIT. MPL-2.0 is for
+# attohttpc (UPnP in portmapper): its own files stay under MPL-2.0.
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# The workspace crates depend on each other by path, without a version.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
