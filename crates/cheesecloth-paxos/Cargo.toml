@@ -1,0 +1,19 @@
+[package]
+name = "cheesecloth-paxos"
+description = "Cheesecloth consensus: CASPaxos with reconfiguration, independent of the transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+futures-util.workspace = true
+rand.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+postcard.workspace = true
+
+[dev-dependencies]
+stateright = "0.31"
+tempfile = "3"

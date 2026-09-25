@@ -1,0 +1,7 @@
+# Options for `cheesecloth daemon` when run by systemd, e.g.
+#   CHEESECLOTH_OPTS="--advertise 203.0.113.7 --relay always"
+# See `cheesecloth daemon --help`. Restart the service after changing this.
+CHEESECLOTH_OPTS=""
+
+# Log filter, e.g. "info" or "cheesecloth_daemon=debug".
+#RUST_LOG=info

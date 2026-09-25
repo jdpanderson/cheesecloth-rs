@@ -1,0 +1,32 @@
+#!/usr/bin/make -f
+# Builds with cargo and the crates from crates.io, so it needs network access
+# (Cargo.lock pins every version).
+
+export CARGO_HOME = $(CURDIR)/debian/cargo-home
+export CARGO_TARGET_DIR = $(CURDIR)/debian/target
+# Line tables for the -dbgsym package; dh_strip strips the binary itself.
+export CARGO_PROFILE_RELEASE_DEBUG = line-tables-only
+export CARGO_PROFILE_RELEASE_STRIP = none
+
+ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+CARGO_JOBS = -j $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+endif
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+	rm -rf debian/cargo-home debian/target
+
+override_dh_auto_build:
+	cargo build --release --locked $(CARGO_JOBS) -p cheesecloth
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	cargo test --release --locked $(CARGO_JOBS) --workspace
+endif
+
+override_dh_auto_install:
+	install -Dm755 debian/target/release/cheesecloth -t debian/cheesecloth/usr/bin
+	install -Dm644 packaging/cheesecloth.service -t debian/cheesecloth/usr/lib/systemd/system
+	install -Dm644 packaging/cheesecloth.default debian/cheesecloth/etc/default/cheesecloth

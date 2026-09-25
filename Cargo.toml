@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["spikes"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+cheesecloth-core = { path = "crates/cheesecloth-core" }
+cheesecloth-paxos = { path = "crates/cheesecloth-paxos" }
+cheesecloth-net = { path = "crates/cheesecloth-net" }
+cheesecloth-wg = { path = "crates/cheesecloth-wg" }
+cheesecloth-daemon = { path = "crates/cheesecloth-daemon" }
+
+anyhow = "1"
+blake3 = "1"
+clap = { version = "4", features = ["derive", "env"] }
+data-encoding = "2"
+defguard_wireguard_rs = "0.12"
+futures-util = "0.3"
+ed25519-dalek = { version = "2", features = ["serde"] }
+if-addrs = "0.15"
+ipnet = { version = "2", features = ["serde"] }
+parking_lot = "0.12"
+portmapper = { version = "0.19", default-features = false }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rand = "0.10"
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+socket2 = { version = "0.6", features = ["all"] }
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# The model check in cheesecloth-paxos visits millions of states; without
+# optimisation it takes minutes instead of seconds.
+[profile.dev.package.cheesecloth-paxos]
+opt-level = 3
+
+[profile.dev.package.stateright]
+opt-level = 3

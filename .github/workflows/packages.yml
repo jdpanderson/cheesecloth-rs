@@ -1,0 +1,132 @@
+name: Packages
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '2'
+
+jobs:
+  macos:
+    name: macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select stable Rust
+        run: rustup update stable --no-self-update
+      - name: Build and test
+        run: |
+          cargo build --release --locked -p cheesecloth
+          cargo test --release --locked --workspace
+      - name: Test macOS userspace WireGuard
+        timeout-minutes: 5
+        run: |
+          cargo test --release --locked -p cheesecloth-wg \
+            --features macos-integration --test macos_userspace \
+            --config 'target."cfg(target_os = \"macos\")".runner = ["sudo", "-n"]' \
+            -- --nocapture
+      - name: Build installer
+        run: bash packaging/macos/build.sh
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: cheesecloth-macos-${{ matrix.arch }}
+          path: dist/*.pkg
+          if-no-files-found: error
+          compression-level: 0
+
+  debian:
+    name: Debian 13 (amd64)
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    timeout-minutes: 45
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install build dependencies
+        run: |
+          printf '%s\n' 'deb http://deb.debian.org/debian trixie-backports main' > /etc/apt/sources.list.d/backports.list
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential debhelper git ca-certificates procps \
+            cargo/trixie-backports rustc/trixie-backports
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and test package
+        run: |
+          dpkg-buildpackage -us -uc -b -j2
+          mkdir -p dist
+          cp ../cheesecloth*.deb dist/
+      - name: Check package payload
+        run: |
+          dpkg-deb --info dist/cheesecloth_*.deb
+          dpkg-deb --extract dist/cheesecloth_*.deb "$RUNNER_TEMP/package"
+          "$RUNNER_TEMP/package/usr/bin/cheesecloth" --version
+          test -f "$RUNNER_TEMP/package/usr/lib/systemd/system/cheesecloth.service"
+          test -f "$RUNNER_TEMP/package/etc/default/cheesecloth"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: cheesecloth-debian13-amd64
+          path: dist/*.deb
+          if-no-files-found: error
+          compression-level: 0
+
+  arch:
+    name: Arch Linux (x86_64)
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 45
+    steps:
+      - name: Install build dependencies
+        run: pacman -Syu --noconfirm --needed git rust openresolv
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build and test package
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- bash -c 'cd "$1/packaging/arch" && makepkg --noconfirm --check' bash "$GITHUB_WORKSPACE"
+          mkdir -p dist
+          cp packaging/arch/cheesecloth-*.pkg.tar.zst dist/
+      - name: Check package payload
+        run: |
+          pacman -Qip dist/cheesecloth-*.pkg.tar.zst
+          mkdir -p "$RUNNER_TEMP/package"
+          tar -xf dist/cheesecloth-[0-9]*.pkg.tar.zst -C "$RUNNER_TEMP/package"
+          "$RUNNER_TEMP/package/usr/bin/cheesecloth" --version
+          test -f "$RUNNER_TEMP/package/usr/lib/systemd/system/cheesecloth.service"
+          test -f "$RUNNER_TEMP/package/etc/default/cheesecloth"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: cheesecloth-arch-x86_64
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+          compression-level: 0

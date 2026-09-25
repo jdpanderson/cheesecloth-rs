@@ -1,0 +1,30 @@
+[package]
+name = "cheesecloth-wg"
+description = "Cheesecloth data plane: WireGuard interface management, path planning and NAT openers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Enables the privileged macOS integration test. Normal tests need no root.
+macos-integration = []
+
+[[test]]
+name = "macos_userspace"
+required-features = ["macos-integration"]
+
+[dependencies]
+anyhow.workspace = true
+cheesecloth-core.workspace = true
+defguard_wireguard_rs.workspace = true
+ipnet.workspace = true
+serde.workspace = true
+socket2.workspace = true
+tracing.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+defguard_boringtun = "0.7"
