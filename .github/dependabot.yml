@@ -1,0 +1,19 @@
+# Weekly update pull requests. The actions are pinned by SHA, so without
+# these they never receive fixes.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # One pull request for all compatible updates.
+      compatible:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']

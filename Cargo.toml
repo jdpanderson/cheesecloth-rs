@@ -1,0 +1,74 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["spikes"]
+
+[workspace.package]
+version = "0.0.0"
+authors = ["Jonathan Anderson <janderson@janderson.ca>"]
+edition = "2024"
+# The oldest Rust that builds the dependencies; CI checks it.
+rust-version = "1.91"
+license = "MIT"
+repository = "https://github.com/jdpanderson/cheesecloth-rs"
+homepage = "https://github.com/jdpanderson/cheesecloth-rs"
+readme = "README.md"
+publish = false
+
+[workspace.dependencies]
+cheesecloth-core = { path = "crates/cheesecloth-core" }
+cheesecloth-paxos = { path = "crates/cheesecloth-paxos" }
+cheesecloth-net = { path = "crates/cheesecloth-net" }
+cheesecloth-wg = { path = "crates/cheesecloth-wg" }
+cheesecloth-daemon = { path = "crates/cheesecloth-daemon" }
+
+anyhow = "1"
+blake3 = "1"
+clap = { version = "4", features = ["derive", "env"] }
+data-encoding = "2"
+defguard_boringtun = "0.7"
+defguard_wireguard_rs = "0.12"
+futures-util = "0.3"
+hostname = "0.4"
+ed25519-dalek = { version = "2", features = ["serde"] }
+if-addrs = "0.15"
+ipnet = { version = "2", features = ["serde"] }
+libc = "0.2"
+parking_lot = "0.12"
+portmapper = { version = "0.19", default-features = false }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rand = "0.10"
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+socket2 = { version = "0.6", features = ["all"] }
+stateright = "0.31"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Every crate uses these (`[lints] workspace = true`).
+[workspace.lints.rust]
+rust_2018_idioms = { level = "warn", priority = -1 }
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+
+# A smaller and faster binary for the packages, at the cost of a slower build.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# The model check in cheesecloth-paxos visits millions of states; without
+# optimisation it takes minutes instead of seconds.
+[profile.dev.package.cheesecloth-paxos]
+opt-level = 3
+
+[profile.dev.package.stateright]
+opt-level = 3
