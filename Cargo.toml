@@ -30,7 +30,7 @@ defguard_boringtun = "0.7"
 defguard_wireguard_rs = "0.12"
 futures-util = "0.3"
 hostname = "0.4"
-ed25519-dalek = { version = "2", features = ["serde"] }
+ed25519-dalek = { version = "3", features = ["serde"] }
 if-addrs = "0.15"
 ipnet = { version = "2", features = ["serde"] }
 libc = "0.2"
