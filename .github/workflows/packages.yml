@@ -47,7 +47,7 @@ jobs:
             echo "::error::tag $TAG does not match version $version"
             exit 1
           fi
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Format
@@ -76,7 +76,7 @@ jobs:
             jq -r '.packages[] | select(.name == "cheesecloth") | .rust_version')
           rustup toolchain install "$version" --profile minimal --no-self-update
           echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build
@@ -91,7 +91,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
 
@@ -116,7 +116,7 @@ jobs:
           persist-credentials: false
       - name: Select stable Rust
         run: rustup update stable --no-self-update
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build
@@ -134,7 +134,7 @@ jobs:
             -- --nocapture
       - name: Build installer
         run: bash packaging/macos/build.sh
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cheesecloth-macos-${{ matrix.arch }}
           path: dist/*.pkg
@@ -174,7 +174,7 @@ jobs:
           "$RUNNER_TEMP/package/usr/bin/cheesecloth" --version
           test -f "$RUNNER_TEMP/package/usr/lib/systemd/system/cheesecloth.service"
           test -f "$RUNNER_TEMP/package/etc/default/cheesecloth"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cheesecloth-debian13-amd64
           path: dist/*.deb
@@ -209,7 +209,7 @@ jobs:
           "$RUNNER_TEMP/package/usr/bin/cheesecloth" --version
           test -f "$RUNNER_TEMP/package/usr/lib/systemd/system/cheesecloth.service"
           test -f "$RUNNER_TEMP/package/etc/default/cheesecloth"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cheesecloth-arch-x86_64
           path: dist/*.pkg.tar.zst
