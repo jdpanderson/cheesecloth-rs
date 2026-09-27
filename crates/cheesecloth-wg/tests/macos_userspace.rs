@@ -99,6 +99,20 @@ fn real_userspace_tunnel() -> Result<()> {
             "no encrypted traffic"
         );
 
+        // BoringTun cannot change a peer in place. A panic there stops the
+        // device, so status and traffic would both time out.
+        let updated = PeerConfig {
+            keepalive: 25,
+            ..peer.clone()
+        };
+        backend.set_peer(&updated)?;
+        let status = backend.status()?;
+        ensure!(
+            status.len() == 1 && status[0].keepalive == 25,
+            "peer was not updated: {status:?}"
+        );
+        exchange(LOCAL_V4, REMOTE_V4)?;
+
         backend.remove_peer(&peer.key)?;
         ensure!(
             backend.status()?.is_empty(),

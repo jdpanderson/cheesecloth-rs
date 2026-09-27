@@ -193,6 +193,11 @@ mod defguard {
         kind: &'static str,
         up: bool,
         name: String,
+        // BoringTun panics when a set changes an existing peer, and the panic
+        // stops the whole device. For userspace, these are the keys that may
+        // be installed, so set_peer removes them first. None for the kernel,
+        // which changes peers in place.
+        installed: Option<std::collections::HashSet<WgKey>>,
     }
 
     fn mask(net: &IpNet) -> IpAddrMask {
@@ -212,6 +217,7 @@ mod defguard {
                 kind: "kernel",
                 up: false,
                 name: name.into(),
+                installed: None,
             })
         }
 
@@ -227,6 +233,7 @@ mod defguard {
                 kind: "userspace",
                 up: false,
                 name: name.into(),
+                installed: Some(Default::default()),
             })
         }
 
@@ -287,6 +294,10 @@ mod defguard {
             self.api
                 .create_interface()
                 .context("creating the WireGuard interface")?;
+            // A new device starts with no peers.
+            if let Some(installed) = &mut self.installed {
+                installed.clear();
+            }
             let iface = InterfaceConfiguration {
                 name: config.name.clone(),
                 prvkey: Key::new(config.private_key).to_lower_hex(),
@@ -317,12 +328,22 @@ mod defguard {
             p.endpoint = peer.endpoint;
             p.persistent_keepalive_interval = Some(peer.keepalive);
             p.allowed_ips = peer.allowed_ips.iter().map(mask).collect();
+            // The key stays listed even if the set below fails, because a
+            // failed set may still have added the peer.
+            if let Some(installed) = &mut self.installed
+                && !installed.insert(peer.key)
+            {
+                self.api.remove_peer(&p.public_key)?;
+            }
             self.api.configure_peer(&p)?;
             Ok(())
         }
 
         fn remove_peer(&mut self, key: &WgKey) -> Result<()> {
             self.api.remove_peer(&Key::new(key.0))?;
+            if let Some(installed) = &mut self.installed {
+                installed.remove(key);
+            }
             Ok(())
         }
 
