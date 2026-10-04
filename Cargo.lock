@@ -669,9 +669,9 @@ dependencies = [
 
 [[package]]
 name = "defguard_wireguard_rs"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6200ebad7ba02fc3272f9bd3883ef1aa187b95f0205491c1685b4168b22a3b8"
+checksum = "ed997d9067c268058aa41d9c585beea28366558b8c7ad89c0ead6a9895b1ef58"
 dependencies = [
  "base64 0.23.1",
  "defguard_boringtun",
@@ -2779,7 +2779,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
