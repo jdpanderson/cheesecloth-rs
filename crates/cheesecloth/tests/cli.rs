@@ -302,6 +302,15 @@ fn the_cli_reports_errors() {
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&out.stderr).contains("expected auto, always or never"));
+    let out = Command::new(BIN)
+        .args(["daemon", "--log", "cheesecloth=loud"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .starts_with("error: invalid --log filter \"cheesecloth=loud\"")
+    );
 
     let d = Daemon::start("solo", "auto");
     assert!(d.err(&["join", "cc1garbage"]).contains("invite token"));
@@ -338,4 +347,31 @@ fn the_cli_stops_the_daemon_which_stays_in_its_cluster() {
     assert_eq!(d.json(&["stop"]), serde_json::Value::Null);
     let mut d = d;
     d.wait_for_exit();
+}
+
+/// Logs that don't go to a terminal, such as the journal, have no colors.
+#[test]
+fn logs_to_a_pipe_have_no_colors() {
+    let dir = tempfile::tempdir().unwrap();
+    let child = Command::new(BIN)
+        .arg("--state-dir")
+        .arg(dir.path())
+        .args(["daemon", "--wireguard", "mock", "--no-port-mapping"])
+        .args(["--bind", "127.0.0.1", "--interface", "mock-logs"])
+        .args(["--listen-port", &free_port().to_string()])
+        .args(["--wg-port", &free_port().to_string()])
+        .args(["--log", "cheesecloth_daemon=info"])
+        .env_remove("CHEESECLOTH_SOCKET")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_until("the local API", || {
+        cli_in(dir.path(), &["status"]).status.success()
+    });
+    assert!(cli_in(dir.path(), &["stop"]).status.success());
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let logs = String::from_utf8(out.stdout).unwrap();
+    assert!(logs.contains("cheesecloth daemon starting"), "{logs}");
+    assert!(!logs.contains('\x1b'), "{logs:?}");
 }

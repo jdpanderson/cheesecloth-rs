@@ -28,9 +28,9 @@ clap = { version = "4", features = ["derive", "env"] }
 data-encoding = "2"
 defguard_boringtun = "0.7"
 defguard_wireguard_rs = "0.12"
-futures-util = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 hostname = "0.4"
-ed25519-dalek = { version = "2", features = ["serde"] }
+ed25519-dalek = "3"
 if-addrs = "0.15"
 ipnet = { version = "2", features = ["serde"] }
 libc = "0.2"
@@ -46,9 +46,9 @@ socket2 = { version = "0.6", features = ["all"] }
 stateright = "0.31"
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = "0.3"
 
 # Every crate uses these (`[lints] workspace = true`).
 [workspace.lints.rust]

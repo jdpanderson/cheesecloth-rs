@@ -4,9 +4,11 @@ use std::{fs, io, path::Path};
 
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use rand::TryRng;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-
-pub use ed25519_dalek::Signature;
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, DeserializeOwned, SeqAccess, Visitor},
+    ser::SerializeTuple,
+};
 
 use crate::{Error, NodeId};
 
@@ -44,6 +46,56 @@ impl Domain {
 
     fn message(self, bytes: &[u8]) -> Vec<u8> {
         [self.tag(), bytes].concat()
+    }
+}
+
+/// An ed25519 signature.
+///
+/// Serde sees it as a tuple of its 64 bytes, as `ed25519` 2 did. Signatures
+/// are stored on disk and sent between nodes, so we keep this format
+/// ourselves and don't depend on the format of the `ed25519` library.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Signature(ed25519_dalek::Signature);
+
+impl Signature {
+    pub fn to_bytes(&self) -> [u8; 64] {
+        self.0.to_bytes()
+    }
+}
+
+impl Serialize for Signature {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tuple = serializer.serialize_tuple(64)?;
+        for byte in self.to_bytes() {
+            tuple.serialize_element(&byte)?;
+        }
+        tuple.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Signature {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Bytes;
+
+        impl<'de> Visitor<'de> for Bytes {
+            type Value = Signature;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("the 64 bytes of an ed25519 signature")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Signature, A::Error> {
+                let mut bytes = [0u8; 64];
+                for (i, byte) in bytes.iter_mut().enumerate() {
+                    *byte = seq
+                        .next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(Signature(ed25519_dalek::Signature::from_bytes(&bytes)))
+            }
+        }
+
+        deserializer.deserialize_tuple(64, Bytes)
     }
 }
 
@@ -94,7 +146,7 @@ impl Identity {
     }
 
     pub fn sign(&self, domain: Domain, bytes: &[u8]) -> Signature {
-        self.signing.sign(&domain.message(bytes))
+        Signature(self.signing.sign(&domain.message(bytes)))
     }
 
     /// Signs `value`, producing a self-describing envelope.
@@ -112,7 +164,7 @@ impl Identity {
 /// Checks `sig` over `bytes` against the key `signer`.
 pub fn verify(signer: &NodeId, domain: Domain, bytes: &[u8], sig: &Signature) -> Result<(), Error> {
     let key = VerifyingKey::from_bytes(&signer.0).map_err(|_| Error::BadSignature)?;
-    key.verify(&domain.message(bytes), sig)
+    key.verify(&domain.message(bytes), &sig.0)
         .map_err(|_| Error::BadSignature)
 }
 

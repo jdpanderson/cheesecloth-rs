@@ -67,10 +67,20 @@ fn options(name: &str, relay: RelayMode, dir: &tempfile::TempDir) -> Options {
     opts
 }
 
+/// Logs with the filter in `RUST_LOG`, or only errors without it.
 fn init_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_test_writer()
+    use tracing_subscriber::{
+        filter::{LevelFilter, Targets},
+        prelude::*,
+    };
+    let filter: Targets = match std::env::var("RUST_LOG") {
+        Ok(s) => s.parse().expect("a valid RUST_LOG filter"),
+        Err(_) => Targets::new().with_default(LevelFilter::ERROR),
+    };
+    let output = tracing_subscriber::fmt::layer().with_test_writer();
+    let _ = tracing_subscriber::registry()
+        .with(output)
+        .with(filter)
         .try_init();
 }
 

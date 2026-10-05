@@ -1,6 +1,6 @@
 //! `cheesecloth`: the daemon and the command-line interface to it.
 
-use std::{net::IpAddr, path::PathBuf, time::Duration};
+use std::{io::IsTerminal, net::IpAddr, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use cheesecloth_core::state::Outcome;
@@ -176,8 +176,16 @@ async fn run(cli: Cli) -> Result<()> {
             name,
             log,
         } => {
-            tracing_subscriber::fmt()
-                .with_env_filter(tracing_subscriber::EnvFilter::new(log))
+            use tracing_subscriber::{filter::Targets, prelude::*};
+            let filter: Targets = log
+                .parse()
+                .with_context(|| format!("invalid --log filter {log:?}"))?;
+            // Colors only on a terminal, not in a log file or the journal.
+            let output =
+                tracing_subscriber::fmt::layer().with_ansi(std::io::stdout().is_terminal());
+            tracing_subscriber::registry()
+                .with(output)
+                .with(filter)
                 .init();
             let mut opts = Options::new(cli.state_dir, name)
                 .context("reading the host name; use --name to supply a node name")?;

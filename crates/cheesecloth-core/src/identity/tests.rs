@@ -64,3 +64,25 @@ fn keys_are_created_once_and_reloaded() {
     // A directory in the way is some other I/O error, passed through.
     assert!(Identity::load_or_create(dir.path()).is_err());
 }
+
+/// Keys, signatures and envelopes are stored on disk and sent between nodes,
+/// so their bytes must never change, even with a new ed25519 library.
+#[test]
+fn signed_envelopes_keep_their_bytes() {
+    let id = Identity::from_secret([7; 32]);
+    let sealed = id.seal(Domain::Command, &42u32);
+    let golden = data_encoding::HEXLOWER
+        .decode(
+            b"ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c\
+              012a\
+              60b522dbae1c2e3896b9781e31a0c4fd558bb38939e389b41c06877f15ed3a8b\
+              1a669fad3acfcf8835e23903ba07c77d848d7d3eaaa63099dcbc1b42028a9705",
+        )
+        .unwrap();
+    assert_eq!(postcard::to_stdvec(&sealed).unwrap(), golden);
+    let decoded: Signed<u32> = postcard::from_bytes(&golden).unwrap();
+    assert_eq!(decoded, sealed);
+    assert_eq!(decoded.open(Domain::Command).unwrap(), 42);
+    // A signature that is cut short doesn't decode.
+    assert!(postcard::from_bytes::<Signed<u32>>(&golden[..golden.len() - 1]).is_err());
+}
