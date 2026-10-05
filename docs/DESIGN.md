@@ -280,7 +280,7 @@ keep the old NAT mapping alive. Incoming offers cannot shorten that wait.
 Repeated failures back off to five-minute retries. There is no WireGuard relay
 fallback; some NATs require a port mapping, manual forwarding or a public endpoint.
 
-Automatic IPv4 router mappings use PCP, NAT-PMP or UPnP and are released on
+Automatic IPv4 router mappings use UPnP or PCP and are released on
 shutdown. A WireGuard mapping supplies a public endpoint; a control-port mapping
 supplies a relay candidate that still needs the reachability check. Disable
 mapping with `--no-port-mapping`.

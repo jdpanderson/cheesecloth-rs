@@ -53,7 +53,7 @@ pub struct Options {
     pub interface: String,
     pub backend: BackendKind,
     pub name: String,
-    /// Ask the router for port mappings (PCP, NAT-PMP or UPnP).
+    /// Ask the router for port mappings (UPnP or PCP).
     pub port_mapping: bool,
     /// Interfaces to use instead of the host's, so that tests do not depend
     /// on the networks of the machine that runs them.

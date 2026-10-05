@@ -83,9 +83,6 @@ impl Node {
         let mut tick = tokio::time::interval(Duration::from_secs(10));
         loop {
             tick.tick().await;
-            if let Some(p) = &self.portmaps {
-                p.retry();
-            }
             self.refresh_facts();
             if let Err(e) = self.maybe_probe().await {
                 debug!("reachability probe: {e:#}");

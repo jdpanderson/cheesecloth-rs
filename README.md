@@ -105,7 +105,7 @@ Use `cheesecloth daemon --help` for all options. The usual adjustments are:
 | --- | --- |
 | `--advertise IP` | Advertise a reachable address, such as a cloud VM's public IP. Repeatable. |
 | `--relay MODE` | `auto` (default) checks reachability; `always` forces relaying; `never` disables it. |
-| `--no-port-mapping` | Disable automatic PCP, NAT-PMP and UPnP router mappings. |
+| `--no-port-mapping` | Disable automatic UPnP and PCP router mappings. |
 | `--wireguard MODE` | Select `auto` (default), `kernel` or `userspace`. |
 | `--keepalive SECONDS` | Set WireGuard keepalive; QUIC keepalive remains 25 seconds. |
 

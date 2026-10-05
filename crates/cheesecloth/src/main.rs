@@ -76,7 +76,7 @@ enum Cmd {
         /// Bind the control plane to this address only.
         #[arg(long, default_value = "::")]
         bind: IpAddr,
-        /// Don't ask the router for port mappings (PCP, NAT-PMP, UPnP).
+        /// Don't ask the router for port mappings (UPnP, PCP).
         #[arg(long)]
         no_port_mapping: bool,
         /// This node's name, at most 32 bytes (default: the host name, cut to

@@ -1,4 +1,4 @@
-//! Router port mapping (PCP, NAT-PMP or UPnP, via `portmapper`) for the
+//! Router port mapping (UPnP or PCP, via `port-control-client`) for the
 //! WireGuard and control-plane ports.
 //!
 //! A mapped control port makes the node a relay candidate (the dial-back still
@@ -6,44 +6,45 @@
 //! WireGuard endpoint, so peers can reach the node directly even behind a NAT
 //! where punching fails.
 
-use parking_lot::Mutex;
-use std::{
-    net::SocketAddr,
-    num::NonZeroU16,
-    time::{Duration, Instant},
-};
+use std::{net::SocketAddr, num::NonZeroU16};
 
-use portmapper::{Client, Config};
+use port_control_client::{Config, Method, PortMapping, Protocol};
 use tracing::info;
 
-/// How often to ask again for a mapping the router hasn't granted.
-const RETRY: Duration = Duration::from_secs(60);
-
+/// Each mapping has a background task that gets it, renews it, and asks again
+/// after a minute if the router hasn't granted it.
 pub struct PortMaps {
-    wg: Client,
-    control: Client,
-    last_retry: Mutex<Instant>,
+    wg: Option<PortMapping>,
+    control: Option<PortMapping>,
 }
 
-fn client(port: u16) -> Client {
-    let c = Client::new(Config::default());
-    if let Some(p) = NonZeroU16::new(port) {
-        c.update_local_port(p);
+/// Both ports are UDP: WireGuard, and QUIC for the control plane. UPnP comes
+/// first because more routers have it than PCP.
+fn start(port: u16) -> Option<PortMapping> {
+    let port = NonZeroU16::new(port)?;
+    Some(PortMapping::start(
+        Config::new(Protocol::Udp, port)
+            .description("cheesecloth")
+            .methods([Method::Upnp, Method::Pcp]),
+    ))
+}
+
+fn external(m: &Option<PortMapping>) -> Option<SocketAddr> {
+    m.as_ref()?.mapping().map(|m| SocketAddr::V4(m.external))
+}
+
+async fn stop(m: &Option<PortMapping>) {
+    if let Some(m) = m {
+        m.stop().await;
     }
-    c
-}
-
-fn external(c: &Client) -> Option<SocketAddr> {
-    (*c.watch_external_address().borrow()).map(SocketAddr::V4)
 }
 
 impl PortMaps {
     /// Starts asking the router for mappings of both ports.
     pub fn start(wg_port: u16, control_port: u16) -> Self {
         Self {
-            wg: client(wg_port),
-            control: client(control_port),
-            last_retry: Mutex::new(Instant::now()),
+            wg: start(wg_port),
+            control: start(control_port),
         }
     }
 
@@ -57,29 +58,12 @@ impl PortMaps {
         external(&self.control)
     }
 
-    /// Asks again for any mapping we don't have, at most once a minute.
-    /// (Granted mappings are renewed by `portmapper` itself.)
-    pub fn retry(&self) {
-        let mut last = self.last_retry.lock();
-        if last.elapsed() < RETRY {
-            return;
-        }
-        *last = Instant::now();
-        for c in [&self.wg, &self.control] {
-            if external(c).is_none() {
-                c.procure_mapping();
-            }
-        }
-    }
-
-    /// Releases the mappings on the router.
+    /// Releases the mappings on the router. Each release waits up to two
+    /// seconds for the router to answer.
     pub async fn stop(&self) {
         let had = self.wg().is_some() || self.control().is_some();
-        self.wg.deactivate();
-        self.control.deactivate();
+        tokio::join!(stop(&self.wg), stop(&self.control));
         if had {
-            // Give the release requests a moment before the clients are dropped.
-            tokio::time::sleep(Duration::from_secs(1)).await;
             info!("released router port mappings");
         }
     }

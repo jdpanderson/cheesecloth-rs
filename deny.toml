@@ -11,15 +11,13 @@ unmaintained = "workspace"
 yanked = "deny"
 
 [licenses]
-# Only licenses that allow shipping the binary under MIT. MPL-2.0 is for
-# attohttpc (UPnP in portmapper): its own files stay under MPL-2.0.
+# Only licenses that allow shipping the binary under MIT.
 allow = [
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "MIT",
-    "MPL-2.0",
     "Unicode-3.0",
 ]
 
