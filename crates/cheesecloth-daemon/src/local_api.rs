@@ -4,17 +4,31 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 #[cfg(unix)]
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::info;
 
 use crate::{
-    Daemon,
+    Daemon, Phase,
     api::{ApiRequest, ApiResponse},
 };
 
 fn to_json<T: serde::Serialize>(value: T) -> Result<serde_json::Value> {
     Ok(serde_json::to_value(value)?)
 }
+
+async fn write_response(
+    write: &mut (impl AsyncWrite + Unpin + ?Sized),
+    resp: &ApiResponse,
+) -> std::io::Result<()> {
+    let mut out = serde_json::to_string(resp).expect("serializable");
+    out.push('\n');
+    write.write_all(out.as_bytes()).await
+}
+
+/// The connection of a `stop` request. It is answered after shutdown, so the
+/// client knows that cleanup has finished.
+pub(crate) struct StopRequest(Box<dyn AsyncWrite + Send + Unpin>);
 
 impl Daemon {
     pub async fn handle_api(self: &Arc<Self>, req: ApiRequest) -> ApiResponse {
@@ -37,12 +51,40 @@ impl Daemon {
                 ApiRequest::ConfigSet { key, value } => {
                     to_json(self.config_set(&key, &value).await?)?
                 }
+                // `serve_api` keeps the connection to answer after shutdown.
+                ApiRequest::Stop => bail!("stop is only served on the API socket"),
             })
         }
         .await;
         match res {
             Ok(v) => ApiResponse::Ok(v),
             Err(e) => ApiResponse::Err(format!("{e:#}")),
+        }
+    }
+
+    /// Keeps `write` to answer once shutdown has finished, and wakes `serve`.
+    fn request_stop(&self, write: impl AsyncWrite + Send + Unpin + 'static) {
+        self.stop_requests.lock().push(StopRequest(Box::new(write)));
+        self.stop_requested.notify_one();
+    }
+
+    /// Answers the `stop` requests. An error says that local cleanup is still
+    /// pending.
+    pub(crate) async fn answer_stop_requests(&self) {
+        let requests = std::mem::take(&mut *self.stop_requests.lock());
+        if requests.is_empty() {
+            return;
+        }
+        let resp = match &*self.phase.read() {
+            Phase::Stopping { error, .. } => ApiResponse::Err(match error {
+                Some(e) => format!("stopped, but local cleanup is pending: {e}"),
+                None => "stopped, but local cleanup is pending".into(),
+            }),
+            _ => ApiResponse::Ok(serde_json::Value::Null),
+        };
+        for mut request in requests {
+            // A client that has gone away doesn't need the answer.
+            let _ = write_response(&mut *request.0, &resp).await;
         }
     }
 
@@ -62,12 +104,14 @@ impl Daemon {
                         let mut lines = BufReader::new(read).lines();
                         while let Ok(Some(line)) = lines.next_line().await {
                             let resp = match serde_json::from_str::<ApiRequest>(&line) {
+                                Ok(ApiRequest::Stop) => {
+                                    daemon.request_stop(write);
+                                    return;
+                                }
                                 Ok(req) => daemon.handle_api(req).await,
                                 Err(e) => ApiResponse::Err(format!("bad request: {e}")),
                             };
-                            let mut out = serde_json::to_string(&resp).expect("serializable");
-                            out.push('\n');
-                            if write.write_all(out.as_bytes()).await.is_err() {
+                            if write_response(&mut write, &resp).await.is_err() {
                                 break;
                             }
                         }
@@ -145,5 +189,115 @@ mod tests {
         server.await.unwrap().unwrap();
         drop(d);
         assert!(weak.upgrade().is_none());
+    }
+
+    use std::time::Duration;
+
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    use crate::testing::serve;
+
+    /// Fails the test instead of hanging when `f` never finishes.
+    async fn within<F: Future>(f: F) -> F::Output {
+        tokio::time::timeout(Duration::from_secs(5), f)
+            .await
+            .expect("finished in time")
+    }
+
+    /// Waits until `n` stop requests are queued.
+    async fn queued(d: &Daemon, n: usize) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while d.stop_requests.lock().len() < n {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("queued stop requests");
+    }
+
+    #[tokio::test]
+    async fn stop_is_answered_after_shutdown_and_ends_serve() {
+        let (d, _dir) = crate::testing::daemon("api-stop-request", crate::RelayMode::Never).await;
+        let (server, socket) = serve(&d).await;
+        let answer: serde_json::Value = within(crate::api::call(&socket, &ApiRequest::Stop))
+            .await
+            .unwrap();
+        assert!(answer.is_null());
+        assert!(matches!(&*d.phase.read(), Phase::Stopped));
+        within(server).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn every_stop_request_is_answered() {
+        let (d, _dir) = crate::testing::daemon("api-stop-twice", crate::RelayMode::Never).await;
+        let (server, socket) = serve(&d).await;
+        // Holding the operation lock keeps shutdown from starting, so both
+        // requests are queued before it answers.
+        let op = d.op.lock().await;
+        let stop = || {
+            let socket = socket.clone();
+            tokio::spawn(async move {
+                crate::api::call::<serde_json::Value>(&socket, &ApiRequest::Stop).await
+            })
+        };
+        let (first, second) = (stop(), stop());
+        queued(&d, 2).await;
+        drop(op);
+        assert!(within(first).await.unwrap().unwrap().is_null());
+        assert!(within(second).await.unwrap().unwrap().is_null());
+        within(server).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn stop_follows_other_requests_on_one_connection() {
+        let (d, _dir) = crate::testing::daemon("api-stop-after", crate::RelayMode::Never).await;
+        let (server, socket) = serve(&d).await;
+        let client = tokio::net::UnixStream::connect(&socket).await.unwrap();
+        let (read, mut write) = client.into_split();
+        let mut lines = tokio::io::BufReader::new(read).lines();
+        write
+            .write_all(b"{\"cmd\":\"status\"}\n{\"cmd\":\"stop\"}\n")
+            .await
+            .unwrap();
+        let status = within(lines.next_line()).await.unwrap().unwrap();
+        assert!(status.starts_with("{\"ok\":{"), "{status}");
+        assert_eq!(
+            within(lines.next_line()).await.unwrap().unwrap(),
+            "{\"ok\":null}"
+        );
+        assert!(within(lines.next_line()).await.unwrap().is_none());
+        within(server).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_stop_client_that_goes_away_does_not_hold_up_shutdown() {
+        let (d, _dir) = crate::testing::daemon("api-stop-gone", crate::RelayMode::Never).await;
+        let (server, socket) = serve(&d).await;
+        let op = d.op.lock().await;
+        let mut client = tokio::net::UnixStream::connect(&socket).await.unwrap();
+        client.write_all(b"{\"cmd\":\"stop\"}\n").await.unwrap();
+        queued(&d, 1).await;
+        drop(client);
+        drop(op);
+        within(server).await.unwrap().unwrap();
+        assert!(matches!(&*d.phase.read(), Phase::Stopped));
+    }
+
+    #[tokio::test]
+    async fn a_signal_shuts_down_without_stop_requests() {
+        let (d, _dir) = crate::testing::daemon("api-signal", crate::RelayMode::Never).await;
+        within(crate::serve(d.clone(), async {})).await.unwrap();
+        assert!(matches!(&*d.phase.read(), Phase::Stopped));
+    }
+
+    #[tokio::test]
+    async fn handle_api_refuses_stop_without_a_connection() {
+        let (d, _dir) = crate::testing::daemon("api-stop-direct", crate::RelayMode::Never).await;
+        assert!(matches!(
+            d.handle_api(ApiRequest::Stop).await,
+            ApiResponse::Err(e) if e.contains("API socket")
+        ));
+        assert!(d.stop_requests.lock().is_empty());
+        d.shutdown().await;
     }
 }

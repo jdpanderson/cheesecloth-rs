@@ -35,11 +35,13 @@ use anyhow::{Context, Result};
 use cheesecloth_core::{ClusterId, Identity, NodeId};
 use cheesecloth_net::{BoxFuture, Net, NetOptions};
 use parking_lot::{Mutex, RwLock};
+use tokio::sync::Notify;
 use tracing::{info, warn};
 
 pub use options::{Options, RelayMode, socket_path};
 
 use files::{Cleanup, Files, PendingJoin};
+use local_api::StopRequest;
 use node::Node;
 
 /// Where this node is in its cluster membership.
@@ -73,6 +75,9 @@ pub struct Daemon {
     /// The one polling task owned by the current pending join.
     pending_poll: Mutex<Option<tokio::task::JoinHandle<()>>>,
     removal_watch: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// `stop` requests, answered when shutdown has finished.
+    stop_requests: Mutex<Vec<StopRequest>>,
+    stop_requested: Notify,
 }
 
 impl Daemon {
@@ -100,6 +105,8 @@ impl Daemon {
             op: tokio::sync::Mutex::new(()),
             pending_poll: Mutex::new(None),
             removal_watch: Mutex::new(None),
+            stop_requests: Mutex::default(),
+            stop_requested: Notify::new(),
         });
         let callbacks = Arc::new(Callbacks(Arc::downgrade(&daemon)));
         net.set_directory(callbacks.clone());
@@ -176,6 +183,7 @@ impl Daemon {
             *self.phase.write() = Phase::Stopped;
         }
         self.net.close();
+        self.answer_stop_requests().await;
     }
 }
 
@@ -248,20 +256,31 @@ impl cheesecloth_net::Handler for Callbacks {
     }
 }
 
-/// Runs the daemon until interrupted.
+/// Runs the daemon until interrupted or asked to stop.
 pub async fn run(opts: Options) -> Result<()> {
     let daemon = Daemon::start(opts).await?;
+    serve(daemon, shutdown_signal()).await
+}
+
+/// Serves the local API until `signal` completes, a `stop` request arrives or
+/// the API fails, then shuts the daemon down.
+async fn serve(daemon: Arc<Daemon>, signal: impl Future<Output = ()>) -> Result<()> {
     let mut api = tokio::spawn(daemon.clone().serve_api());
-    let result = tokio::select! {
-        r = &mut api => r.map_err(anyhow::Error::from).and_then(|r| r),
-        _ = shutdown_signal() => {
-            info!("shutting down");
+    let stop = tokio::select! {
+        r = &mut api => Err(r),
+        _ = signal => Ok("shutting down"),
+        _ = daemon.stop_requested.notified() => Ok("shutting down: stop requested"),
+    };
+    let result = match stop {
+        Err(r) => r.map_err(anyhow::Error::from).and_then(|r| r),
+        Ok(reason) => {
+            info!("{reason}");
             api.abort();
             match api.await {
                 Err(e) if e.is_cancelled() => Ok(()),
                 r => r.map_err(anyhow::Error::from).and_then(|r| r),
             }
-        },
+        }
     };
     daemon.shutdown().await;
     result

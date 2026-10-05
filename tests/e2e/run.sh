@@ -305,6 +305,24 @@ else
     fail "restart" "$(cc n1 status; cc n1 peers)"
 fi
 
+# `cheesecloth stop` ends n5's daemon cleanly and releases its router mappings.
+# n5's daemon is the container's first process, so the container exits with it,
+# and the stop command itself may be killed before it prints its answer.
+n5_rules() { ex rd "nft list table inet filter" | grep -c "$(lan d)\.10" || true; }
+rules_before=$(n5_rules)
+cc n5 stop >/dev/null 2>&1 || true
+n5_exit=$(timeout 30 podman wait $P-n5 || echo timeout)
+if [[ $n5_exit == 0 ]] && podman logs $P-n5 2>&1 | grep -q "shutting down: stop requested"; then
+    pass "stop ends the daemon cleanly"
+else
+    fail "stop ends the daemon cleanly" "exit status: $n5_exit"
+fi
+if ((rules_before > 0)) && [[ $(n5_rules) == 0 ]]; then
+    pass "stop releases n5's router mappings" "$rules_before router rules before, none after"
+else
+    fail "stop releases n5's router mappings" "$rules_before rules before; now: $(ex rd 'nft list table inet filter')"
+fi
+
 echo
 if ((failures)); then
     echo "$failures check(s) failed; recent daemon logs:"

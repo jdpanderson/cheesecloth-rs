@@ -25,7 +25,11 @@ struct Daemon {
 
 impl Daemon {
     fn start(name: &str, relay: &str) -> Daemon {
-        let dir = tempfile::tempdir().unwrap();
+        Daemon::start_in(tempfile::tempdir().unwrap(), name, relay)
+    }
+
+    /// Starts a daemon on an existing state directory.
+    fn start_in(dir: tempfile::TempDir, name: &str, relay: &str) -> Daemon {
         let child = Command::new(BIN)
             .arg("--state-dir")
             .arg(dir.path())
@@ -39,9 +43,9 @@ impl Daemon {
             .spawn()
             .unwrap();
         let d = Daemon { child, dir };
-        wait_until("the local API", || {
-            d.dir.path().join("control.sock").exists()
-        });
+        // A daemon that ran on this directory before leaves its socket file,
+        // so wait for an answer, not for the file.
+        wait_until("the local API", || d.cli(&["status"]).status.success());
         d
     }
 
@@ -88,6 +92,11 @@ impl Daemon {
                 .unwrap()
                 .success()
         );
+        self.wait_for_exit();
+    }
+
+    /// Waits for the daemon to exit by itself, which it must do cleanly.
+    fn wait_for_exit(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {
@@ -97,6 +106,15 @@ impl Daemon {
             assert!(Instant::now() < deadline, "daemon didn't stop");
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    /// Stops the daemon with `cheesecloth stop` and returns its state
+    /// directory.
+    fn stop_with_cli(mut self) -> tempfile::TempDir {
+        assert_eq!(self.ok(&["stop"]).trim(), "Stopped.");
+        self.wait_for_exit();
+        let dir = tempfile::tempdir().unwrap();
+        std::mem::replace(&mut self.dir, dir)
     }
 }
 
@@ -299,4 +317,25 @@ fn the_cli_reports_errors() {
         .unwrap();
     assert!(!out.status.success());
     d.stop();
+}
+
+#[test]
+fn the_cli_stops_the_daemon_which_stays_in_its_cluster() {
+    let d = Daemon::start("delta", "never");
+    d.ok(&["init", "--ipv4-range", "100.64.60.0/24"]);
+    let dir = d.stop_with_cli();
+    assert!(
+        cli_in(dir.path(), &["stop"])
+            .stderr
+            .starts_with(b"error: can't reach the cheesecloth daemon")
+    );
+
+    // A new daemon on the same state directory is still a member.
+    let d = Daemon::start_in(dir, "delta", "never");
+    let s = d.json(&["status"]);
+    assert_eq!(s["phase"], "member", "{s}");
+    assert_eq!(s["ipv4"], "100.64.60.1", "{s}");
+    assert_eq!(d.json(&["stop"]), serde_json::Value::Null);
+    let mut d = d;
+    d.wait_for_exit();
 }

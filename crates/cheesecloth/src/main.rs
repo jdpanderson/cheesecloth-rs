@@ -114,6 +114,11 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// Stop the daemon and wait until it has removed the WireGuard interface
+    /// and released router port mappings. Unlike `leave`, this node stays in
+    /// its cluster. Stop a system service with its service manager instead
+    /// (e.g. `systemctl stop cheesecloth`).
+    Stop,
     /// Proposals waiting for approvals.
     Pending,
     /// Approve a proposal.
@@ -201,6 +206,7 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Peers => ApiRequest::Peers,
         Cmd::Remove { node } => ApiRequest::Remove { node },
         Cmd::Leave { force } => ApiRequest::Leave { force },
+        Cmd::Stop => ApiRequest::Stop,
         Cmd::Pending => ApiRequest::Pending,
         Cmd::Approve { proposal } => ApiRequest::Approve { proposal },
         Cmd::Reject { proposal } => ApiRequest::Reject { proposal },
@@ -264,6 +270,7 @@ async fn run(cli: Cli) -> Result<()> {
                 println!("The other members may need repair.");
             }
         },
+        ApiRequest::Stop => println!("Stopped."),
         ApiRequest::Remove { .. }
         | ApiRequest::Approve { .. }
         | ApiRequest::Reject { .. }

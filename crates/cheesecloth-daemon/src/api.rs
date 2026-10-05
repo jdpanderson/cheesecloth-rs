@@ -46,6 +46,8 @@ pub enum ApiRequest {
         key: String,
         value: String,
     },
+    /// Stop the daemon. Answered once shutdown has finished.
+    Stop,
 }
 
 /// Every response is `{"ok": ...}` or `{"err": "..."}`.

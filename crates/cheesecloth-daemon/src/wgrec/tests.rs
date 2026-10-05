@@ -281,6 +281,30 @@ async fn failed_shutdown_cleanup_retains_membership_and_can_be_retried() {
     restarted.shutdown().await;
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_reports_failed_shutdown_cleanup() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (d, _dir) = crate::testing::daemon("stop-cleanup", RelayMode::Never).await;
+    d.init(None).await.unwrap();
+    let node = d.node().unwrap();
+    node.quiesce().await;
+    let flaky = Flaky::default();
+    flaky.fail_down.store(true, SeqCst);
+    node.wg.lock().backend = Some(Box::new(flaky));
+    let (server, socket) = crate::testing::serve(&d).await;
+    let stop = crate::api::call::<serde_json::Value>(&socket, &crate::api::ApiRequest::Stop);
+    let err = tokio::time::timeout(std::time::Duration::from_secs(5), stop)
+        .await
+        .expect("an answer")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("local cleanup is pending"),
+        "{err:#}"
+    );
+    server.await.unwrap().unwrap();
+}
+
 #[tokio::test]
 async fn restart_resumes_cleanup_without_loading_partially_deleted_consensus() {
     let (d, _dir) = crate::testing::daemon("cleanup-restart", RelayMode::Never).await;

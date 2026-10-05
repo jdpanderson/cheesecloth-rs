@@ -79,6 +79,11 @@ If local cleanup fails, status shows `stopping`; fix the reported problem and
 retry `leave`. `leave --force` continues past cluster handoff failures, but
 cannot bypass unfinished local cleanup. See [lifecycle and recovery](docs/DESIGN.md#lifecycle-and-recovery).
 
+`stop` stops a daemon that you started yourself, and returns when it has
+removed the WireGuard interface and released router port mappings. The node
+stays in its cluster. Stop the packaged service with
+`sudo systemctl stop cheesecloth`.
+
 ## Security and availability
 
 With default settings, three voters require two votes and have **no Byzantine

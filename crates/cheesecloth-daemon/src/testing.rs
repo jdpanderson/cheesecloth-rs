@@ -250,3 +250,24 @@ pub async fn daemon(name: &str, relay: RelayMode) -> (Arc<crate::Daemon>, tempfi
     opts.port_mapping = false;
     (crate::Daemon::start(opts).await.unwrap(), dir)
 }
+
+/// Runs `crate::serve` for `d` with a signal that never comes, so only a
+/// `stop` request ends it. Returns once the API socket exists.
+#[cfg(unix)]
+pub async fn serve(
+    d: &Arc<crate::Daemon>,
+) -> (
+    tokio::task::JoinHandle<anyhow::Result<()>>,
+    std::path::PathBuf,
+) {
+    let socket = d.opts.socket_path();
+    let server = tokio::spawn(crate::serve(d.clone(), std::future::pending()));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !socket.exists() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the API socket");
+    (server, socket)
+}
