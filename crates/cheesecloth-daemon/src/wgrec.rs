@@ -394,12 +394,12 @@ fn allowed_ips(node: &Node, peer: &NodeId, ipv4: Ipv4Addr) -> Vec<IpNet> {
     ]
 }
 
-/// The WireGuard keepalive for punched paths: never off, or the NAT mapping
-/// would expire.
+/// The WireGuard keepalive for punched paths: `--keepalive` if set and not
+/// off, else the NAT default. Never off, or the NAT mapping would expire.
 fn wg_nat_keepalive(node: &Node) -> u16 {
-    match node.wg_keepalive() {
-        0 => cheesecloth_core::NAT_KEEPALIVE_SECS,
-        k => k,
+    match node.opts.keepalive {
+        Some(k) if k > 0 => k,
+        _ => cheesecloth_core::NAT_KEEPALIVE_SECS,
     }
 }
 

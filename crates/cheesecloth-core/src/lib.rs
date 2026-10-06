@@ -21,6 +21,9 @@ pub const DEFAULT_WG_PORT: u16 = 51820;
 pub const DEFAULT_CONTROL_PORT: u16 = 51821;
 /// Keepalive used behind NAT: just under the common 30 s UDP NAT timeout.
 pub const NAT_KEEPALIVE_SECS: u16 = 25;
+/// Keepalive behind NAT when the router maps the WireGuard port. The mapping
+/// should not need a keepalive; this long interval tests that in practice.
+pub const MAPPED_KEEPALIVE_SECS: u16 = 300;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

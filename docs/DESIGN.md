@@ -285,7 +285,10 @@ shutdown. A WireGuard mapping supplies a public endpoint; a control-port mapping
 supplies a relay candidate that still needs the reachability check. Disable
 mapping with `--no-port-mapping`.
 
-WireGuard keepalive defaults to 25 seconds behind NAT and off when public;
-`--keepalive` overrides it. The default backend tries kernel WireGuard, then
+WireGuard keepalive defaults to 25 seconds behind NAT and off when public.
+When the router maps the WireGuard port, it is 300 seconds: the mapping should
+not need a keepalive, and this tests that while still sending a first handshake.
+`--keepalive` overrides these defaults. Punched paths always keep a keepalive:
+`--keepalive` if it is not 0, otherwise 25 seconds. The default backend tries kernel WireGuard, then
 userspace; macOS uses userspace directly. No per-peer ACLs are implemented:
 use host firewalls to restrict overlay access.

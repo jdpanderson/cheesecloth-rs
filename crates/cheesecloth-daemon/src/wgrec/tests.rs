@@ -754,6 +754,36 @@ async fn a_public_node_waits_for_nated_peers() {
     );
 }
 
+#[tokio::test]
+async fn keepalive_defaults_follow_the_port_mapping() {
+    let h = harness_with(RelayMode::Never, &[false], |_| {}).await;
+    let nat = cheesecloth_core::NAT_KEEPALIVE_SECS;
+    assert_eq!(h.node.wg_keepalive(), nat);
+
+    // A mapped WireGuard port uses the long keepalive, public or not.
+    h.node.facts.lock().mapped_wg = Some("203.0.113.1:51820".parse().unwrap());
+    assert_eq!(
+        h.node.wg_keepalive(),
+        cheesecloth_core::MAPPED_KEEPALIVE_SECS
+    );
+    h.node.facts.lock().public = true;
+    assert_eq!(
+        h.node.wg_keepalive(),
+        cheesecloth_core::MAPPED_KEEPALIVE_SECS
+    );
+    // Punched paths keep the NAT default.
+    assert_eq!(wg_nat_keepalive(&h.node), nat);
+
+    // --keepalive overrides the default; punched paths ignore 0.
+    let h = harness_with(RelayMode::Never, &[false], |o| o.keepalive = Some(0)).await;
+    h.node.facts.lock().mapped_wg = Some("203.0.113.1:51820".parse().unwrap());
+    assert_eq!(h.node.wg_keepalive(), 0);
+    assert_eq!(wg_nat_keepalive(&h.node), nat);
+    let h = harness_with(RelayMode::Never, &[false], |o| o.keepalive = Some(40)).await;
+    assert_eq!(h.node.wg_keepalive(), 40);
+    assert_eq!(wg_nat_keepalive(&h.node), 40);
+}
+
 /// A peer in the punch state `punch`, with a WireGuard key of its own.
 fn punch_peer(h: &Harness, id: NodeId, punch: Punch) {
     h.node.wg.lock().peers.insert(

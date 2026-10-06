@@ -107,7 +107,10 @@ impl Node {
     /// WireGuard persistent keepalive towards peers with a direct path.
     pub fn wg_keepalive(&self) -> u16 {
         self.opts.keepalive.unwrap_or_else(|| {
-            if self.facts.lock().public {
+            let f = self.facts.lock();
+            if f.mapped_wg.is_some() {
+                cheesecloth_core::MAPPED_KEEPALIVE_SECS
+            } else if f.public {
                 0
             } else {
                 cheesecloth_core::NAT_KEEPALIVE_SECS
