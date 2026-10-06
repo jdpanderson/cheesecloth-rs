@@ -245,6 +245,18 @@ mod defguard {
                 self.up = false;
                 return Ok(());
             }
+            if let Err(e) = self.delete() {
+                tracing::error!(
+                    "deleting the WireGuard interface {} failed; it may need to be deleted by hand: {e:#}",
+                    self.name
+                );
+                return Err(e);
+            }
+            self.up = false;
+            Ok(())
+        }
+
+        fn delete(&mut self) -> Result<()> {
             #[cfg(target_os = "macos")]
             {
                 // Dropping the owner stops BoringTun and releases its utun.
@@ -269,7 +281,6 @@ mod defguard {
                 "interface {} is still present",
                 self.name
             );
-            self.up = false;
             Ok(())
         }
     }

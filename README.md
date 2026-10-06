@@ -15,6 +15,9 @@ Byzantine proof.
 
 Use Rust and Cargo 1.91 or later, synchronized clocks, and either running
 `systemd-resolved` or a `resolvconf` implementation for interface cleanup.
+The `resolvconf` from `systemd-resolvconf` calls `systemd-resolved`, so with it
+`systemd-resolved` must be running. If cleanup fails, the daemon will not start
+until the interface is gone; remove it with `sudo ip link delete cheesecloth0`.
 The daemon needs root, or `CAP_NET_ADMIN` and `CAP_NET_RAW` with suitable file
 permissions. These examples use root for the daemon and its private API socket.
 
