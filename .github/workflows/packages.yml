@@ -230,6 +230,25 @@ jobs:
           path: dist
           pattern: cheesecloth-*
           merge-multiple: true
+      # pacman -U <url> needs <url>.sig next to the package. See docs/SIGNING.md.
+      # The key is used only here, so jobs that run cargo build scripts never
+      # see it.
+      - name: Sign the Arch package
+        env:
+          ARCH_SIGNING_KEY: ${{ secrets.ARCH_SIGNING_KEY }}
+        run: |
+          if [[ -z "$ARCH_SIGNING_KEY" ]]; then
+            echo "::error::the ARCH_SIGNING_KEY secret is not set"
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          install -d -m 700 "$GNUPGHOME"
+          gpg --batch --import <<< "$ARCH_SIGNING_KEY"
+          for package in dist/*.pkg.tar.zst; do
+            gpg --batch --yes --detach-sign --no-armor "$package"
+            gpg --batch --verify "$package.sig" "$package"
+          done
+          rm -rf "$GNUPGHOME"
       - name: Attach packages to the release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -139,6 +139,9 @@ macOS installers are unsigned and not notarized. They install the command in
 the systemd service described below. CI runs the workspace tests before packaging.
 Both macOS builds also require real userspace WireGuard tests to pass.
 
+Release builds of the Arch package are signed. See [package signing](docs/SIGNING.md)
+to trust the key and install from a release URL.
+
 To build a macOS installer locally, use `cargo build --release --locked` followed
 by `bash packaging/macos/build.sh`. The script uses your installed Cargo.
 
