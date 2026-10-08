@@ -45,6 +45,9 @@ pub struct LocalFacts {
     pub mapped_control: Option<SocketAddr>,
     /// Public only through the router's mapping of the control port.
     pub via_mapping: bool,
+    /// Reachability is not checked: the only members connected are on our
+    /// own network, and their dial-backs would not cross our router.
+    pub only_local_vias: bool,
     last_probe: Option<(Instant, Vec<SocketAddr>, bool)>,
 }
 
@@ -173,8 +176,10 @@ impl Node {
             return Ok(());
         }
         let candidates: Vec<SocketAddr> = {
-            let f = self.facts.lock();
+            let mut f = self.facts.lock();
             if f.candidates.is_empty() {
+                // Nothing to check.
+                f.only_local_vias = false;
                 return Ok(());
             }
             if let Some((when, prev, _)) = &f.last_probe
@@ -202,17 +207,27 @@ impl Node {
             .collect();
         // A member on our own network dials us back without crossing our
         // router or firewall, so its success proves nothing.
-        let vias: Vec<NodeId> = others
+        let connected: Vec<NodeId> = others
             .iter()
             .filter(|n| self.net.is_connected(n))
+            .copied()
+            .collect();
+        let vias: Vec<NodeId> = connected
+            .iter()
             .filter(|n| !self.on_our_network(n, remotes.get(n).copied()))
             .copied()
             .collect();
+        let only_local = !connected.is_empty() && vias.is_empty();
+        let was_only_local = std::mem::replace(&mut self.facts.lock().only_local_vias, only_local);
         if !others.is_empty() && vias.is_empty() {
-            // Nobody outside our network can dial us back yet (e.g. just
-            // after starting). There is no result, so check again on the
-            // next tick.
-            debug!("reachability check deferred: no member outside our network connected");
+            // Nobody outside our network can dial us back yet. There is no
+            // result, so check again on the next tick.
+            if !only_local {
+                // Normal just after starting.
+                debug!("reachability check deferred: no member connected");
+            } else if !was_only_local {
+                info!("reachability not checked: every connected member is on our network");
+            }
             return Ok(());
         }
         let ok = if others.is_empty() {

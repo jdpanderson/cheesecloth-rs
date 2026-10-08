@@ -62,6 +62,11 @@ impl Node {
                     .into(),
             );
         }
+        if self.facts.lock().only_local_vias {
+            warnings.push(
+                "reachability not checked: no member outside our network is connected".into(),
+            );
+        }
         warnings
     }
 

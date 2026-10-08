@@ -817,6 +817,18 @@ async fn members_on_our_network_cannot_confirm_reachability() {
 }
 
 #[tokio::test]
+async fn an_unchecked_reachability_is_a_warning() {
+    let h = harness(RelayMode::Auto, &[true]).await;
+    let warning = "reachability not checked: no member outside our network is connected";
+    assert!(!h.node.warnings().iter().any(|w| w == warning));
+    // Nobody is connected: normal after starting, so no warning.
+    h.node.maybe_probe().await.unwrap();
+    assert!(!h.node.facts.lock().only_local_vias);
+    h.node.facts.lock().only_local_vias = true;
+    assert!(h.node.warnings().iter().any(|w| w == warning));
+}
+
+#[tokio::test]
 async fn a_restarted_relay_stays_one_until_checked() {
     // Our member record says relay (as `Always` would publish); we now run
     // in `Auto`, like a public node restarting.
