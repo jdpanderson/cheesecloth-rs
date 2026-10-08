@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-08
+
 ### Changed
 
 - The CASPaxos engine moved out of this repository, to the
@@ -19,6 +21,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   downgrade a node, have it leave the cluster first, and join again after.
 - If an agreed state can't be saved by this node's acceptor, learning it now
   fails, so the node never reports a state that isn't on disk.
+
+### Fixed
+
+- When a change can't be agreed, the error now gives the cause of each
+  failed request to an acceptor, not only its outer message.
+- Requests that arrived while the daemon was starting were refused with
+  "not ready". The control plane now accepts connections only once it can
+  answer them.
+- The Debian package has the right version. The 0.1.0 package was labelled
+  0.0.0.
 
 ## [0.1.0] - 2026-10-07
 
