@@ -147,6 +147,9 @@ impl Node {
         // A router mapping makes WireGuard reachable even if the node isn't
         // otherwise public.
         wg_public.extend(mapped_wg);
+        // The dial-back tests only the control port. The WireGuard port on
+        // the same address is taken to behave the same way: both sit behind
+        // the same router and firewall.
         if f.public {
             wg_public.extend(public_ips.iter().map(|ip| SocketAddr::new(*ip, wport)));
         }
