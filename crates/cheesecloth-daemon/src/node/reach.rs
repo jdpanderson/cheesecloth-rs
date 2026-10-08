@@ -12,6 +12,7 @@ use std::{
 use anyhow::Result;
 use cheesecloth_core::{
     Domain, NodeId,
+    addr::is_global,
     state::{Command, MemberInfo},
 };
 use tracing::{debug, info};
@@ -238,16 +239,21 @@ impl Node {
         Ok(())
     }
 
-    /// Whether `node` is on one of our interfaces' networks: its connection
-    /// address `remote` or one of its control-plane addresses is inside one.
+    /// Whether `node` is on one of our interfaces' networks: the address we
+    /// are connected to it at, `remote`, is inside one, or one of its globally
+    /// routable control-plane addresses is. Every site reuses the private
+    /// ranges, so a published private address inside our networks proves
+    /// nothing. A connection to one does: our routes send it over our own
+    /// interface.
     pub(super) fn on_our_network(&self, node: &NodeId, remote: Option<SocketAddr>) -> bool {
-        let mut addrs = self.control_addrs_of(node);
-        addrs.extend(remote);
+        let published = self.control_addrs_of(node);
         let facts = self.facts.lock();
-        addrs.iter().any(|a| {
-            let ip = a.ip().to_canonical();
-            facts.ifaces.nets.iter().any(|n| n.contains(&ip))
-        })
+        let ours = |ip: IpAddr| facts.ifaces.nets.iter().any(|n| n.contains(&ip));
+        remote.is_some_and(|r| ours(r.ip().to_canonical()))
+            || published
+                .iter()
+                .map(|a| a.ip().to_canonical())
+                .any(|ip| is_global(&ip) && ours(ip))
     }
 
     /// Our member record as it should be.

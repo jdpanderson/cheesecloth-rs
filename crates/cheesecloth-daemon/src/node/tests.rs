@@ -774,33 +774,46 @@ async fn nobody_to_confirm_means_not_public_yet() {
 async fn members_on_our_network_cannot_confirm_reachability() {
     let h = harness(RelayMode::Auto, &[true, true]).await;
     let (p, q) = (h.peers[0].id(), h.peers[1].id());
-    // Peers' records say 192.0.2.2 and 192.0.2.3. With no interfaces of
-    // ours, nobody is on our network.
-    assert!(!h.node.on_our_network(&p, None));
-    // A LAN (and an IPv6 prefix, as a router hands out) of ours.
-    h.interfaces.lock().nets = vec![
-        "192.0.2.0/24".parse().unwrap(),
-        "2001:db8:1::/64".parse().unwrap(),
-    ];
-    h.node.refresh_facts();
-    // Its record puts p on our LAN, wherever we're connected to it.
-    assert!(h.node.on_our_network(&p, Some(sa("198.51.100.7:51821"))));
-    // q publishes a public address only, but we're connected to it on our
-    // IPv6 prefix or our LAN (also in IPv4-mapped form).
+    // Like a VPS: a public address, and a VPN address in a private range
+    // that every site reuses.
     h.soft(
-        1,
+        0,
         SoftState {
-            control_addrs: vec![sa("198.51.100.8:51821")],
+            control_addrs: vec![sa("198.51.100.7:51821"), sa("172.17.12.2:51821")],
             ..Default::default()
         },
     );
+    // Like a LAN neighbour: a global IPv6 address in our prefix.
+    h.soft(
+        1,
+        SoftState {
+            control_addrs: vec![sa("[2600:1:2:3::5]:51821")],
+            ..Default::default()
+        },
+    );
+    // With no interfaces of ours, nobody is on our network.
     assert!(!h.node.on_our_network(&q, None));
-    assert!(!h.node.on_our_network(&q, Some(sa("198.51.100.8:51821"))));
-    assert!(h.node.on_our_network(&q, Some(sa("[2001:db8:1::5]:51821"))));
+    // Our LAN, a Docker bridge, and the IPv6 prefix the router hands out.
+    h.interfaces.lock().nets = vec![
+        "10.0.0.0/24".parse().unwrap(),
+        "172.17.0.0/16".parse().unwrap(),
+        "2600:1:2:3::/64".parse().unwrap(),
+    ];
+    h.node.refresh_facts();
+    // p's private address is inside our bridge's range, but that proves
+    // nothing: we are connected to p at its public address.
+    assert!(!h.node.on_our_network(&p, None));
+    assert!(!h.node.on_our_network(&p, Some(sa("198.51.100.7:51821"))));
+    // A connection at an address inside our networks goes over our own
+    // interface (also in IPv4-mapped form).
+    assert!(h.node.on_our_network(&p, Some(sa("10.0.0.9:51821"))));
     assert!(
         h.node
-            .on_our_network(&q, Some(sa("[::ffff:192.0.2.9]:51821")))
+            .on_our_network(&p, Some(sa("[::ffff:10.0.0.9]:51821")))
     );
+    // q's global address is in our prefix, wherever we're connected to it.
+    assert!(h.node.on_our_network(&q, None));
+    assert!(h.node.on_our_network(&q, Some(sa("198.51.100.8:51821"))));
 }
 
 #[tokio::test]
