@@ -40,9 +40,8 @@ pub struct LocalFacts {
     pub wg_lan: Vec<SocketAddr>,
     /// Control-plane addresses at which we might be publicly reachable.
     pub candidates: Vec<SocketAddr>,
-    /// The router's mappings of our WireGuard and control-plane ports.
+    /// The router's mapping of our WireGuard port.
     pub mapped_wg: Option<SocketAddr>,
-    pub mapped_control: Option<SocketAddr>,
     /// Public only through the router's mapping of the control port.
     pub via_mapping: bool,
     /// Reachability is not checked: the only members connected are on our
@@ -169,7 +168,6 @@ impl Node {
         f.via_mapping = f.public && public_ips.is_empty() && mapped_control.is_some();
         f.candidates = candidates;
         f.mapped_wg = mapped_wg;
-        f.mapped_control = mapped_control;
         f.ifaces = ifaces;
     }
 
