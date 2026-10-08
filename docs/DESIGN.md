@@ -188,10 +188,10 @@ identity. Dialers pin the peer's Ed25519 raw public key. Receivers require proof
 of key possession; only cluster members may use member services. Non-members
 may redeem invites or query their own pending joins.
 
-Relays connect to one another; NATed members seek at least two relays when
-available. Members can also connect directly, including over a LAN. Forwarded
-requests and responses are signed end to end. A relay can drop or delay traffic;
-forwarding replay tracking is in memory and resets on restart.
+Every member connects to every relay. Other members connect directly only on
+the same LAN, or when the cluster has no relay. Forwarded requests and
+responses are signed end to end. A relay can drop or delay traffic; forwarding
+replay tracking is in memory and resets on restart.
 
 The ALPN is `cheesecloth/2`. Each stream starts with its kind, cluster ID and
 sender's clock; a wrong cluster is refused. Responses carry the responder's
@@ -209,12 +209,34 @@ The transport tries another route only when the request could not have arrived
 in full. A lost reply after delivery is returned as an uncertain outcome.
 Consensus retries retain the signed command for result lookup.
 
-`--relay auto` uses candidate public addresses, explicit `--advertise` addresses
-and control-port mappings, confirmed by another member's fresh-socket dial-back.
-An isolated founder has nobody to ask and initially relies on its candidates.
+With `--relay auto`, a node is a relay when it is publicly reachable. Its
+candidate addresses are its global interface addresses, its `--advertise`
+addresses and a router mapping of its control port. Another member checks them
+by dialing back from a new socket, which the node's firewall sees as an
+unsolicited connection. The check runs every ten minutes, and again when the
+candidates change. After a restart, the node keeps its last result until a new
+check finishes. An isolated founder has nobody to ask, so it counts as public
+if it has a candidate.
+
+Members on the node's own network cannot confirm it, because their dial-backs
+do not cross its router. A member is on the node's network when the node is
+connected to it at an address inside one of its interface networks, or when one
+of the member's global addresses is inside one. Private addresses that a member
+only publishes do not count: every site uses the same private ranges. When only
+such members are connected, the check waits, and `status` shows a warning.
+
+The check tests only the control port. The WireGuard port at the same address
+is assumed to behave the same way, because both are behind the same router and
+firewall.
+
 `always` forces relay participation; `never` disables forwarding even on a public
 node. Signed soft state overrides the member record's initial relay role.
 Disabling relaying leaves direct services and WireGuard paths available.
+
+A node publishes the addresses of its running interfaces, except loopback,
+link-local and overlay addresses. An interface that is not running, such as a
+Docker bridge with no containers, carries no traffic, so its address is left
+out. Its network still counts when `init` chooses an overlay range.
 
 QUIC keepalive is always 25 seconds. Idle consensus sends no rounds, but discovery,
 reachability checks, port mapping and WireGuard maintain their own traffic.
@@ -283,12 +305,16 @@ fallback; some NATs require a port mapping, manual forwarding or a public endpoi
 Automatic IPv4 router mappings use UPnP or PCP and are released on
 shutdown. A WireGuard mapping supplies a public endpoint; a control-port mapping
 supplies a relay candidate that still needs the reachability check. Disable
-mapping with `--no-port-mapping`.
+mapping with `--no-port-mapping`. For each port, `status` shows the router's
+address and the protocol (UPnP or PCP), the last error, or that the daemon is
+still asking the router.
 
 WireGuard keepalive defaults to 25 seconds behind NAT and off when public.
 When the router maps the WireGuard port, it is 300 seconds: the mapping should
 not need a keepalive, and this tests that while still sending a first handshake.
 `--keepalive` overrides these defaults. Punched paths always keep a keepalive:
-`--keepalive` if it is not 0, otherwise 25 seconds. The default backend tries kernel WireGuard, then
-userspace; macOS uses userspace directly. No per-peer ACLs are implemented:
-use host firewalls to restrict overlay access.
+`--keepalive` if it is not 0, otherwise 25 seconds.
+
+The default backend tries kernel WireGuard, then userspace; macOS uses
+userspace directly. No per-peer ACLs are implemented: use host firewalls to
+restrict overlay access.

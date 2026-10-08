@@ -117,6 +117,9 @@ Use `cheesecloth daemon --help` for all options. The usual adjustments are:
 | `--wireguard MODE` | Select `auto` (default), `kernel` or `userspace`. |
 | `--keepalive SECONDS` | Set WireGuard keepalive; QUIC keepalive remains 25 seconds. |
 
+`status` shows whether the node is publicly reachable, its WireGuard keepalive,
+and the state of each router port mapping.
+
 Without a relay, separate NATs may prevent control-plane communication. If
 WireGuard punching and port mapping fail, there is no data relay fallback;
 provide a reachable endpoint or port forward. NAT openers and automatic port

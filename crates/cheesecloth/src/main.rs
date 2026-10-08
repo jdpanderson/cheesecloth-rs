@@ -54,8 +54,9 @@ enum Cmd {
         /// Act as a relay: auto (when publicly reachable), always or never.
         #[arg(long, default_value = "auto")]
         relay: RelayMode,
-        /// WireGuard persistent keepalive in seconds (default: 25 behind NAT, off
-        /// when public). The control plane's QUIC keep-alive is always 25 s.
+        /// WireGuard persistent keepalive in seconds (default: 25 behind NAT, 300
+        /// when the router maps the WireGuard port, off when public). The
+        /// control plane's QUIC keep-alive is always 25 s.
         #[arg(long)]
         keepalive: Option<u16>,
         /// Control-plane (QUIC) UDP port.
