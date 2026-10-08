@@ -833,6 +833,20 @@ async fn binding_dual_stack_and_to_a_taken_port() {
         format!("{e:#}").contains(&format!("binding {addr}")),
         "{e:#}"
     );
+
+    // A taken dual-stack port is not a missing IPv6: no IPv4 fallback, and
+    // the error names the dual-stack address. (Without IPv6 on this host,
+    // `a` fell back to IPv4 itself.)
+    if a.net.local_addr().unwrap().is_ipv6() {
+        let e = Net::bind(
+            NetOptions::new(format!("[::]:{port}").parse().unwrap()),
+            Arc::new(Identity::generate()),
+        )
+        .err()
+        .unwrap();
+        let e = format!("{e:#}");
+        assert!(e.contains(&format!("binding [::]:{port}")), "{e}");
+    }
 }
 
 #[tokio::test]

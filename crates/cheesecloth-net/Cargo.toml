@@ -15,6 +15,7 @@ publish.workspace = true
 parking_lot.workspace = true
 anyhow.workspace = true
 cheesecloth-core.workspace = true
+libc.workspace = true
 postcard.workspace = true
 quinn.workspace = true
 rustls.workspace = true

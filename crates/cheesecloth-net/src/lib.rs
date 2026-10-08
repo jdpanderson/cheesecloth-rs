@@ -178,6 +178,20 @@ fn bind_socket(addr: SocketAddr) -> Result<std::net::UdpSocket> {
     Ok(bind().with_context(|| format!("binding {addr}"))?.into())
 }
 
+/// Whether a failed bind means the host has no IPv6, rather than another
+/// problem such as a port in use, which IPv4 would not solve.
+fn ipv6_missing(e: &anyhow::Error) -> bool {
+    let Some(e) = e.downcast_ref::<std::io::Error>() else {
+        return false;
+    };
+    // "Address family not supported" has no `io::ErrorKind`.
+    #[cfg(unix)]
+    let no_family = e.raw_os_error() == Some(libc::EAFNOSUPPORT);
+    #[cfg(windows)]
+    let no_family = e.raw_os_error() == Some(10047); // WSAEAFNOSUPPORT
+    no_family || e.kind() == std::io::ErrorKind::AddrNotAvailable
+}
+
 /// Normalises IPv4-mapped IPv6 addresses to IPv4.
 pub fn canonical(addr: SocketAddr) -> SocketAddr {
     SocketAddr::new(addr.ip().to_canonical(), addr.port())
@@ -191,7 +205,7 @@ impl Net {
         let server = tls::server_config(&identity, transport.clone())?;
         let socket = match bind_socket(opts.bind) {
             Ok(s) => s,
-            Err(e) if opts.bind.ip() == IpAddr::V6(Ipv6Addr::UNSPECIFIED) => {
+            Err(e) if opts.bind.ip() == IpAddr::V6(Ipv6Addr::UNSPECIFIED) && ipv6_missing(&e) => {
                 warn!("IPv6 unavailable ({e:#}); control plane uses IPv4 only");
                 bind_socket(SocketAddr::from(([0, 0, 0, 0], opts.bind.port())))?
             }
