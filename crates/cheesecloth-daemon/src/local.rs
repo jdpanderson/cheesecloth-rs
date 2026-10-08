@@ -10,10 +10,36 @@ use ipnet::IpNet;
 pub struct Interfaces {
     /// Networks of this node's interfaces (for "same LAN" checks).
     pub nets: Vec<IpNet>,
-    /// Usable unicast addresses, excluding loopback, link-local and overlay.
+    /// Usable unicast addresses: on running interfaces, and not loopback,
+    /// link-local or overlay.
     pub ips: Vec<IpAddr>,
     /// The subset of `ips` that is globally routable.
     pub global: Vec<IpAddr>,
+}
+
+impl Interfaces {
+    /// Adds one interface address. An interface that isn't running, such
+    /// as an idle Docker bridge, carries no traffic, so its address isn't
+    /// usable; its network still counts, as it may come up.
+    fn add(&mut self, ip: IpAddr, prefix: u8, running: bool) {
+        let link_local = match ip {
+            IpAddr::V4(v4) => v4.is_link_local(),
+            IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+        };
+        if link_local || ip.is_unspecified() || ip.is_multicast() {
+            return;
+        }
+        if let Ok(net) = IpNet::new(ip, prefix) {
+            self.nets.push(net.trunc());
+        }
+        if !running {
+            return;
+        }
+        self.ips.push(ip);
+        if is_global(&ip) {
+            self.global.push(ip);
+        }
+    }
 }
 
 /// Reads interface addresses, skipping cheesecloth's own interface and
@@ -34,20 +60,7 @@ pub fn scan(own_interface: &str, overlay: &[IpNet]) -> Interfaces {
         if overlay.iter().any(|n| n.contains(&ip)) {
             continue;
         }
-        let link_local = match ip {
-            IpAddr::V4(v4) => v4.is_link_local(),
-            IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
-        };
-        if link_local || ip.is_unspecified() || ip.is_multicast() {
-            continue;
-        }
-        if let Ok(net) = IpNet::new(ip, prefix) {
-            out.nets.push(net.trunc());
-        }
-        out.ips.push(ip);
-        if is_global(&ip) {
-            out.global.push(ip);
-        }
+        out.add(ip, prefix, iface.is_oper_up());
     }
     out.nets.sort();
     out.nets.dedup();
