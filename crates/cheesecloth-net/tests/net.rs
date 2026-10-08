@@ -819,20 +819,20 @@ async fn binding_dual_stack_and_to_a_taken_port() {
     let a = node_with(&dir, NetOptions::new("[::]:0".parse().unwrap()));
     let port = a.net.local_addr().unwrap().port();
     assert!(port != 0);
-    let taken = NetOptions::new(
-        format!("127.0.0.1:{}", {
-            let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-            let p = s.local_addr().unwrap().port();
-            std::mem::forget(s);
-            p
-        })
-        .parse()
-        .unwrap(),
-    );
+    let addr = format!("127.0.0.1:{}", {
+        let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let p = s.local_addr().unwrap().port();
+        std::mem::forget(s);
+        p
+    });
+    let taken = NetOptions::new(addr.parse().unwrap());
     let e = Net::bind(taken, Arc::new(Identity::generate()))
         .err()
         .unwrap();
-    assert!(format!("{e:#}").contains("binding"), "{e:#}");
+    assert!(
+        format!("{e:#}").contains(&format!("binding {addr}")),
+        "{e:#}"
+    );
 }
 
 #[tokio::test]

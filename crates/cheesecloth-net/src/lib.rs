@@ -159,19 +159,23 @@ fn transport_config(opts: &NetOptions) -> Result<Arc<TransportConfig>> {
 }
 
 /// Binds a UDP socket; for an unspecified IPv6 address, dual-stack.
+/// Errors name the address.
 fn bind_socket(addr: SocketAddr) -> Result<std::net::UdpSocket> {
     use socket2::{Domain as SDomain, Protocol, Socket, Type};
-    let domain = if addr.is_ipv6() {
-        SDomain::IPV6
-    } else {
-        SDomain::IPV4
+    let bind = || -> std::io::Result<Socket> {
+        let domain = if addr.is_ipv6() {
+            SDomain::IPV6
+        } else {
+            SDomain::IPV4
+        };
+        let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+        if addr.is_ipv6() {
+            socket.set_only_v6(false)?;
+        }
+        socket.bind(&addr.into())?;
+        Ok(socket)
     };
-    let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-    if addr.is_ipv6() {
-        socket.set_only_v6(false)?;
-    }
-    socket.bind(&addr.into())?;
-    Ok(socket.into())
+    Ok(bind().with_context(|| format!("binding {addr}"))?.into())
 }
 
 /// Normalises IPv4-mapped IPv6 addresses to IPv4.
@@ -191,7 +195,7 @@ impl Net {
                 warn!("IPv6 unavailable ({e:#}); control plane uses IPv4 only");
                 bind_socket(SocketAddr::from(([0, 0, 0, 0], opts.bind.port())))?
             }
-            Err(e) => return Err(e).context(format!("binding {}", opts.bind)),
+            Err(e) => return Err(e),
         };
         let endpoint = Endpoint::new(
             EndpointConfig::default(),

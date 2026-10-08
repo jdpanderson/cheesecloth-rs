@@ -3,6 +3,7 @@
 //! current, and keeping connections to the members we should reach directly.
 
 use std::{
+    collections::HashMap,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
@@ -192,15 +193,25 @@ impl Node {
             .filter(|n| **n != self.me)
             .copied()
             .collect();
-        let connected: Vec<NodeId> = others
+        let remotes: HashMap<NodeId, SocketAddr> = self
+            .net
+            .connections()
+            .into_iter()
+            .map(|c| (c.node, c.remote))
+            .collect();
+        // A member on our own network dials us back without crossing our
+        // router or firewall, so its success proves nothing.
+        let vias: Vec<NodeId> = others
             .iter()
             .filter(|n| self.net.is_connected(n))
+            .filter(|n| !self.on_our_network(n, remotes.get(n).copied()))
             .copied()
             .collect();
-        if !others.is_empty() && connected.is_empty() {
-            // Nobody can dial us back yet (e.g. just after starting). There
-            // is no result, so check again on the next tick.
-            debug!("reachability check deferred: no member connected");
+        if !others.is_empty() && vias.is_empty() {
+            // Nobody outside our network can dial us back yet (e.g. just
+            // after starting). There is no result, so check again on the
+            // next tick.
+            debug!("reachability check deferred: no member outside our network connected");
             return Ok(());
         }
         let ok = if others.is_empty() {
@@ -208,7 +219,7 @@ impl Node {
             true
         } else {
             let mut ok = false;
-            'outer: for via in &connected {
+            'outer: for via in &vias {
                 for addr in &candidates {
                     match self.net.probe(*via, *addr).await {
                         Ok(()) => {
@@ -225,6 +236,18 @@ impl Node {
         self.facts.lock().last_probe = Some((Instant::now(), candidates, ok));
         self.refresh_facts();
         Ok(())
+    }
+
+    /// Whether `node` is on one of our interfaces' networks: its connection
+    /// address `remote` or one of its control-plane addresses is inside one.
+    pub(super) fn on_our_network(&self, node: &NodeId, remote: Option<SocketAddr>) -> bool {
+        let mut addrs = self.control_addrs_of(node);
+        addrs.extend(remote);
+        let facts = self.facts.lock();
+        addrs.iter().any(|a| {
+            let ip = a.ip().to_canonical();
+            facts.ifaces.nets.iter().any(|n| n.contains(&ip))
+        })
     }
 
     /// Our member record as it should be.

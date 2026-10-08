@@ -771,6 +771,39 @@ async fn nobody_to_confirm_means_not_public_yet() {
 }
 
 #[tokio::test]
+async fn members_on_our_network_cannot_confirm_reachability() {
+    let h = harness(RelayMode::Auto, &[true, true]).await;
+    let (p, q) = (h.peers[0].id(), h.peers[1].id());
+    // Peers' records say 192.0.2.2 and 192.0.2.3. With no interfaces of
+    // ours, nobody is on our network.
+    assert!(!h.node.on_our_network(&p, None));
+    // A LAN (and an IPv6 prefix, as a router hands out) of ours.
+    h.interfaces.lock().nets = vec![
+        "192.0.2.0/24".parse().unwrap(),
+        "2001:db8:1::/64".parse().unwrap(),
+    ];
+    h.node.refresh_facts();
+    // Its record puts p on our LAN, wherever we're connected to it.
+    assert!(h.node.on_our_network(&p, Some(sa("198.51.100.7:51821"))));
+    // q publishes a public address only, but we're connected to it on our
+    // IPv6 prefix or our LAN (also in IPv4-mapped form).
+    h.soft(
+        1,
+        SoftState {
+            control_addrs: vec![sa("198.51.100.8:51821")],
+            ..Default::default()
+        },
+    );
+    assert!(!h.node.on_our_network(&q, None));
+    assert!(!h.node.on_our_network(&q, Some(sa("198.51.100.8:51821"))));
+    assert!(h.node.on_our_network(&q, Some(sa("[2001:db8:1::5]:51821"))));
+    assert!(
+        h.node
+            .on_our_network(&q, Some(sa("[::ffff:192.0.2.9]:51821")))
+    );
+}
+
+#[tokio::test]
 async fn a_restarted_relay_stays_one_until_checked() {
     // Our member record says relay (as `Always` would publish); we now run
     // in `Auto`, like a public node restarting.
