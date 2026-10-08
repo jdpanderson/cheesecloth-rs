@@ -10,11 +10,14 @@ and no permanent consensus leader.
 | Crate | Responsibility |
 | --- | --- |
 | `cheesecloth-core` | Identity, signed commands, invites, deterministic cluster state. |
-| `cheesecloth-paxos` | Transport-independent CASPaxos engine and durable acceptor storage. |
 | `cheesecloth-net` | QUIC connections, authentication, forwarding and reachability probes. |
 | `cheesecloth-wg` | WireGuard backends, path planning and NAT openers. |
 | `cheesecloth-daemon` | Authenticated consensus rounds, membership, discovery, reconciliation and local API. |
 | `cheesecloth` | CLI and daemon entry point. |
+
+The CASPaxos engine and the durable acceptor storage are the separate
+[`pnyx`](https://crates.io/crates/pnyx) crate, which does not depend on the
+transport.
 
 The CLI sends JSON requests to a Unix socket, normally
 `<state-dir>/control.sock`, with mode `0600`. The state directory is `0700`.
@@ -92,8 +95,9 @@ cluster. Temporary absence alone does not remove membership.
 ## Consensus and recovery
 
 Any member may propose a change. The daemon adds signed prepare evidence,
-durable verification votes and acceptance certificates to the CASPaxos engine.
-The engine alone assumes honest participants. The full round and safety
+durable verification votes and acceptance certificates to the CASPaxos engine,
+[pnyx](https://docs.rs/pnyx/0.1/pnyx/). The engine alone assumes honest
+participants. The full round and safety
 argument are in [the safety guide](CONSENSUS-SAFETY.md#authenticated-round).
 
 A new voter configuration must be certified by the installed quorum. Its
@@ -158,7 +162,8 @@ On restart, unfinished shutdown cleanup must succeed before membership resumes.
 | --- | --- |
 | `identity.key`, `wireguard.key` | Persistent node keys; retained after leave. |
 | `cluster.json` | Cluster identity and, when applicable, pending join. |
-| `acceptor.bin` | Durable voting state and latest learned state with proof. |
+| `acceptor.0`, `acceptor.1` | Durable voting state and latest learned state with proof, in two checksummed copies. |
+| `acceptor.bin` | The same state in the format of 0.1.0 and earlier; moved to `acceptor.0` and `acceptor.1` at start. |
 | `transitions.bin` | Verified configuration transition certificates. |
 | `cleanup.json` | Unfinished interface and state cleanup. |
 

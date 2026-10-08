@@ -61,7 +61,7 @@ impl Net {
         }
         let theirs = u64::from_be_bytes(buf[..8].try_into().expect("8 bytes"));
         if let Ok(peer) = tls::peer_id(conn)
-            && self.dir().is_some_and(|d| d.is_member(&peer))
+            && self.dir().is_member(&peer)
         {
             self.record_clock(peer, theirs as i64 - ((t0 + t1) / 2) as i64);
         }
@@ -111,8 +111,12 @@ impl Net {
         );
         let cluster = self.cluster_id().context("not in a cluster")?;
         if to == self.0.me {
-            let h = self.0.handler.get().context("not ready")?.clone();
-            return h.request(to, service, body).await.map_err(|e| anyhow!(e));
+            return self
+                .0
+                .handler
+                .request(to, service, body)
+                .await
+                .map_err(|e| anyhow!(e));
         }
         // Directly if possible. Only a request that certainly didn't reach
         // the peer is tried again through a relay: a lost answer might mean
@@ -131,7 +135,7 @@ impl Net {
             }
             Err(e) => e,
         };
-        let forwarders = self.dir().map(|d| d.forwarders(&to)).unwrap_or_default();
+        let forwarders = self.dir().forwarders(&to);
         let mut errors = vec![format!("direct: {direct:#}")];
         for via in forwarders {
             if via == self.0.me || via == to {
@@ -229,7 +233,7 @@ impl Net {
         req: ForwardRequest,
     ) -> Result<Vec<u8>> {
         ensure!(
-            self.dir().is_some_and(|d| d.is_relay(&self.0.me)),
+            self.dir().is_relay(&self.0.me),
             "relaying is disabled on this node"
         );
         let env = req.envelope.open(Domain::Forwarded)?;
@@ -237,10 +241,7 @@ impl Net {
             req.envelope.signer == peer && env.from == peer,
             "can only forward own messages"
         );
-        ensure!(
-            self.dir().is_some_and(|d| d.is_member(&env.to)),
-            "destination is not a member"
-        );
+        ensure!(self.dir().is_member(&env.to), "destination is not a member");
         let to_conn = self
             .live(&env.to)
             .context("destination not connected to this relay")?;
@@ -284,10 +285,7 @@ impl Net {
         ensure!(env.cluster == cluster, "wrong cluster");
         ensure!(env.to == self.0.me, "not addressed to this node");
         ensure!(signed.signer == env.from, "sender mismatch");
-        ensure!(
-            self.dir().is_some_and(|d| d.is_member(&env.from)),
-            "sender is not a member"
-        );
+        ensure!(self.dir().is_member(&env.from), "sender is not a member");
         self.check_fresh(env.from, env.seq)?;
         // The envelope's sequence number carries the sender's clock.
         self.record_clock(env.from, (env.seq >> 16) as i64 - now_ms() as i64);

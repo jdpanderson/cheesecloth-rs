@@ -13,8 +13,8 @@ use cheesecloth_core::{
     },
 };
 use cheesecloth_net::{Net, NetOptions};
-use cheesecloth_paxos::Acceptor;
 use cheesecloth_wg::BackendKind;
+use pnyx::Acceptor;
 
 use crate::{
     Options, RelayMode,
@@ -73,11 +73,15 @@ pub async fn harness_with(
     opts.interfaces = Some(interfaces.clone());
     tweak(&mut opts);
     let identity = Arc::new(Identity::generate());
+    // The node is in no daemon, so the control plane serves no one: requests
+    // to it are answered as by a node that is in no cluster.
+    let callbacks = Arc::new(crate::Callbacks(std::sync::Weak::new()));
     let net = Net::bind(
         NetOptions::new("127.0.0.1:0".parse().unwrap()),
         identity.clone(),
     )
-    .unwrap();
+    .unwrap()
+    .start(callbacks.clone(), callbacks);
     let (wg_private, wg_public) = cheesecloth_wg::generate_keypair();
     let me = MemberInfo {
         node_id: identity.node_id(),
@@ -223,6 +227,13 @@ impl Drop for Harness {
     fn drop(&mut self) {
         self.node.net.close();
     }
+}
+
+/// Whether `files` holds an acceptor state. Opening it creates nothing.
+pub fn has_acceptor(files: &Files) -> bool {
+    StoredAcceptor::open_existing(files.acceptor())
+        .unwrap()
+        .is_some()
 }
 
 /// A whole daemon on localhost, with a mock WireGuard backend, for tests that

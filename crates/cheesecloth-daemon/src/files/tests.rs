@@ -19,7 +19,8 @@ fn cluster_files_round_trip_and_are_forgotten() {
         }),
     };
     files.save_cluster(&c).unwrap();
-    fs::write(files.acceptor(), b"acceptor").unwrap();
+    crate::node::StoredAcceptor::create(files.acceptor(), pnyx::Acceptor::default()).unwrap();
+    fs::write(files.legacy_acceptor(), b"acceptor").unwrap();
     let back = files.load_cluster().unwrap().unwrap();
     assert_eq!(back.cluster_id, c.cluster_id);
     assert_eq!(
@@ -28,7 +29,8 @@ fn cluster_files_round_trip_and_are_forgotten() {
     );
     files.delete_cluster().unwrap();
     assert!(files.load_cluster().unwrap().is_none());
-    assert!(!files.acceptor().exists());
+    assert!(!crate::testing::has_acceptor(&files));
+    assert!(!files.legacy_acceptor().exists());
     // Already gone: fine.
     files.delete_cluster().unwrap();
 

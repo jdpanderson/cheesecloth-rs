@@ -10,10 +10,11 @@ use std::{collections::BTreeMap, io, path::Path};
 
 use anyhow::{Result, bail};
 use cheesecloth_core::{ClusterId, Domain, Identity, NodeId, Signature, verify};
-use cheesecloth_paxos::{Ballot, Config, store};
+use pnyx::{Ballot, Config};
 use serde::{Deserialize, Serialize};
 
 use super::{Agreed, Chosen};
+use crate::files;
 
 /// The most bytes of transitions sent with a state. A message may be 1 MiB,
 /// and a state 320 KiB.
@@ -254,11 +255,11 @@ pub struct Transitions(BTreeMap<u64, Certificate>);
 impl Transitions {
     /// The transitions saved in `path`, or none if there is no file.
     pub fn load(path: &Path) -> io::Result<Transitions> {
-        Ok(store::load(path)?.unwrap_or_default())
+        Ok(files::load(path)?.unwrap_or_default())
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        store::save(path, self)
+        files::save(path, self)
     }
 
     /// Adds a checked transition. Returns true if it's new.

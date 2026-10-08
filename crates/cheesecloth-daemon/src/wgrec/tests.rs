@@ -313,7 +313,7 @@ async fn restart_resumes_cleanup_without_loading_partially_deleted_consensus() {
     // Interface removal succeeds, but state deletion fails halfway through.
     std::fs::create_dir(d.files.transitions()).unwrap();
     assert!(d.leave(false).await.is_err());
-    assert!(!d.files.acceptor().exists());
+    assert!(!crate::testing::has_acceptor(&d.files));
     assert!(d.files.load_cleanup().unwrap().is_some());
     let mut opts = (*d.opts).clone();
     opts.listen_port = 0;

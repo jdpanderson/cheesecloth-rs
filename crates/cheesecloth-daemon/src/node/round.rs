@@ -5,10 +5,10 @@ use super::{
     proof::{Certificate, Header, Proven, Trusted},
 };
 use crate::proto::{PaxosAnswer, SVC_PAXOS, SVC_VERIFY};
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use cheesecloth_core::state::ClusterState;
 use cheesecloth_core::{ClusterId, Domain, NodeId, Signed};
-use cheesecloth_paxos::{Ballot, Config, Reply, Request, Transport};
+use pnyx::{Ballot, Config, Reply, Request, Transport};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -89,11 +89,11 @@ impl Node {
         if let Some(base) = wire.base {
             self.learn(base.chosen, base.cert, base.transitions)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("{e:#}"))?;
         }
         self.handle_paxos_proven(from, wire.request, wire.proof)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("{e:#}"))
     }
 
     pub(super) async fn verify_round(
@@ -393,22 +393,26 @@ impl<'a> Acceptors<'a> {
             let v = v.clone();
             async move {
                 let share = if *to == self.node.me {
-                    self.node.verify_round(self.node.me, v).await?
+                    self.node
+                        .verify_round(self.node.me, v)
+                        .await
+                        .map_err(anyhow::Error::msg)?
                 } else {
-                    let body = postcard::to_stdvec(&v).map_err(|e| e.to_string())?;
+                    let body = postcard::to_stdvec(&v).context("encoding the verification")?;
                     let bytes = self
                         .node
                         .net
                         .request(*to, SVC_VERIFY, body, super::consensus::REQUEST_TIMEOUT)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    postcard::from_bytes::<Certificate>(&bytes).map_err(|e| e.to_string())?
+                        .await?;
+                    postcard::from_bytes::<Certificate>(&bytes)
+                        .context("decoding the verification vote")?
                 };
-                if share.sigs.len() != 1 || !share.sigs.contains_key(to) {
-                    return Err("verification reply must contain only its sender's vote".into());
-                }
-                share.check_signer(to).map_err(|e| e.to_string())?;
-                Ok::<Certificate, String>(share)
+                ensure!(
+                    share.sigs.len() == 1 && share.sigs.contains_key(to),
+                    "verification reply must contain only its sender's vote"
+                );
+                share.check_signer(to)?;
+                Ok::<Certificate, anyhow::Error>(share)
             }
         });
         use futures_util::StreamExt;
@@ -416,22 +420,24 @@ impl<'a> Acceptors<'a> {
         let mut merged: Option<Certificate> = None;
         let mut errors = Vec::new();
         while let Some(reply) = pending.next().await {
-            if let Err(e) = &reply {
-                errors.push(e.clone());
-            }
-            if let Ok(c) = reply {
-                if !c.verified || c.header != header || c.ballot != *ballot {
+            let c = match reply {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(format!("{e:#}"));
                     continue;
                 }
-                match &mut merged {
-                    Some(m) => m.sigs.extend(c.sigs),
-                    None => merged = Some(c),
-                }
-                let m = merged.as_ref().unwrap();
-                if m.check_config(&value.config, true).is_ok() {
-                    cache.insert(round, m.clone());
-                    return Ok(m.clone());
-                }
+            };
+            if !c.verified || c.header != header || c.ballot != *ballot {
+                continue;
+            }
+            match &mut merged {
+                Some(m) => m.sigs.extend(c.sigs),
+                None => merged = Some(c),
+            }
+            let m = merged.as_ref().unwrap();
+            if m.check_config(&value.config, true).is_ok() {
+                cache.insert(round, m.clone());
+                return Ok(m.clone());
             }
         }
         bail!(
@@ -441,13 +447,32 @@ impl<'a> Acceptors<'a> {
     }
 }
 
+/// Why a request to an acceptor failed, as the transport reports it to pnyx.
+/// It keeps the whole chain of causes: pnyx gives it as the source of its own
+/// error, so `{:#}` prints all of it.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub struct TransportError(#[from] anyhow::Error);
+
+impl From<String> for TransportError {
+    fn from(message: String) -> Self {
+        TransportError(anyhow::Error::msg(message))
+    }
+}
+
+impl From<&'static str> for TransportError {
+    fn from(message: &'static str) -> Self {
+        TransportError(anyhow::Error::msg(message))
+    }
+}
+
 impl Transport<NodeId, ClusterState> for Acceptors<'_> {
-    type Error = String;
+    type Error = TransportError;
     async fn call(
         &self,
         to: &NodeId,
         mut req: Request<NodeId, ClusterState>,
-    ) -> Result<Reply<NodeId, ClusterState>, String> {
+    ) -> Result<Reply<NodeId, ClusterState>, TransportError> {
         // Always request the accepted body; checking a signed header must not
         // depend on an omitted value supplied by an untrusted peer.
         if let Request::Prepare { have, .. } = &mut req {
@@ -459,10 +484,7 @@ impl Transport<NodeId, ClusterState> for Acceptors<'_> {
             }
         };
         let proof = if let Request::Accept { value, .. } = &req {
-            let p = self
-                .verification(&ballot, value)
-                .await
-                .map_err(|e| e.to_string())?;
+            let p = self.verification(&ballot, value).await?;
             self.add_value(p.header.clone(), value);
             Some(p)
         } else {
@@ -482,14 +504,13 @@ impl Transport<NodeId, ClusterState> for Acceptors<'_> {
                 .request(
                     *to,
                     SVC_PAXOS,
-                    postcard::to_stdvec(&wire).map_err(|e| e.to_string())?,
+                    postcard::to_stdvec(&wire).context("encoding the request")?,
                     super::consensus::REQUEST_TIMEOUT,
                 )
-                .await
-                .map_err(|e| e.to_string())?;
-            postcard::from_bytes::<PaxosAnswer>(&bytes).map_err(|e| e.to_string())?
+                .await?;
+            postcard::from_bytes::<PaxosAnswer>(&bytes).context("decoding the answer")?
         };
-        check_feedback(config, &ballot, &answer.reply).map_err(|e| e.to_string())?;
+        check_feedback(config, &ballot, &answer.reply)?;
         let mut checked_promise = None;
         if let Reply::Promise {
             config: c,
@@ -498,7 +519,9 @@ impl Transport<NodeId, ClusterState> for Acceptors<'_> {
         } = &answer.reply
         {
             let signed = answer.promise.ok_or("unsigned promise")?;
-            let p = signed.open(Domain::Promise).map_err(|e| e.to_string())?;
+            let p = signed
+                .open(Domain::Promise)
+                .context("checking the signed promise")?;
             if signed.signer != *to
                 || p.cluster != self.node.cluster_id
                 || p.config != config
@@ -513,8 +536,7 @@ impl Transport<NodeId, ClusterState> for Acceptors<'_> {
                 (Some((ab, Some(v))), Some(cert))
                     if *ab == cert.ballot && cert.header == Header::of(self.node.cluster_id, v) =>
                 {
-                    cert.check_config(&v.config, cert.verified)
-                        .map_err(|e| e.to_string())?;
+                    cert.check_config(&v.config, cert.verified)?;
                     self.add_value(cert.header.clone(), v);
                 }
                 _ => return Err("accepted body does not match signed promise".into()),
@@ -543,7 +565,7 @@ impl Transport<NodeId, ClusterState> for Acceptors<'_> {
             if !matches {
                 return Err("acceptance share mismatch".into());
             }
-            share.check_signer(to).map_err(|e| e.to_string())?;
+            share.check_signer(to)?;
             self.add_share(share);
         } else if matches!(
             answer.reply,
@@ -559,15 +581,13 @@ impl Transport<NodeId, ClusterState> for Acceptors<'_> {
             let (cert, transitions) = answer.stale_proof.ok_or("unproved stale answer")?;
             // `learn` may ignore an already-known state. Its proof still
             // needs checking before it can enter this round's evidence cache.
-            cert.check_config(&cert.header.config, false)
-                .map_err(|e| e.to_string())?;
+            cert.check_config(&cert.header.config, false)?;
             if cert.header.cluster_id != self.node.cluster_id || !cert.proves(learned) {
                 return Err("stale proof mismatch".into());
             }
             self.node
                 .learn(learned.clone(), cert.clone(), transitions)
-                .await
-                .map_err(|e| e.to_string())?;
+                .await?;
             self.add_value(
                 Header::of(self.node.cluster_id, &learned.value),
                 &learned.value,
@@ -607,10 +627,7 @@ fn check_feedback(
             );
             ensure!(
                 *promised >= *ballot
-                    && promised.counter
-                        <= ballot
-                            .counter
-                            .saturating_add(cheesecloth_paxos::MAX_COUNTER_STEP),
+                    && promised.counter <= ballot.counter.saturating_add(pnyx::MAX_COUNTER_STEP),
                 "implausible promised counter"
             );
         }
@@ -624,7 +641,7 @@ fn check_feedback(
                 "counter feedback is for another round"
             );
             ensure!(
-                *limit >= cheesecloth_paxos::MAX_COUNTER_STEP && *limit < ballot.counter,
+                *limit >= pnyx::MAX_COUNTER_STEP && *limit < ballot.counter,
                 "implausible counter limit"
             );
         }

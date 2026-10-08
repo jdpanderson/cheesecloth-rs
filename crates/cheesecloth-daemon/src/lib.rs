@@ -92,25 +92,26 @@ impl Daemon {
         // default), whatever --keepalive says: it keeps NAT mappings to relays
         // open and stops idle links between relays from dropping.
         let net_opts = NetOptions::new(SocketAddr::new(opts.bind_ip, opts.listen_port));
-        let net = Net::bind(net_opts, identity.clone())?;
-        info!(node = %identity.node_id(), control = %net.local_addr()?, "cheesecloth daemon starting");
-        let daemon = Arc::new(Daemon {
-            opts,
-            files,
-            identity,
-            wg_private,
-            net: net.clone(),
-            api_work: Arc::default(),
-            phase: RwLock::new(Phase::None),
-            op: tokio::sync::Mutex::new(()),
-            pending_poll: Mutex::new(None),
-            removal_watch: Mutex::new(None),
-            stop_requests: Mutex::default(),
-            stop_requested: Notify::new(),
+        let bound = Net::bind(net_opts, identity.clone())?;
+        info!(node = %identity.node_id(), control = %bound.local_addr()?, "cheesecloth daemon starting");
+        // The control plane calls back into the daemon, which owns it.
+        let daemon = Arc::new_cyclic(|daemon| {
+            let callbacks = Arc::new(Callbacks(daemon.clone()));
+            Daemon {
+                opts,
+                files,
+                identity,
+                wg_private,
+                net: bound.start(callbacks.clone(), callbacks),
+                api_work: Arc::default(),
+                phase: RwLock::new(Phase::None),
+                op: tokio::sync::Mutex::new(()),
+                pending_poll: Mutex::new(None),
+                removal_watch: Mutex::new(None),
+                stop_requests: Mutex::default(),
+                stop_requested: Notify::new(),
+            }
         });
-        let callbacks = Arc::new(Callbacks(Arc::downgrade(&daemon)));
-        net.set_directory(callbacks.clone());
-        net.set_handler(callbacks);
 
         if let Some(cleanup) = daemon.files.load_cleanup()? {
             *daemon.phase.write() = Phase::Stopping {
@@ -187,8 +188,9 @@ impl Daemon {
     }
 }
 
-/// Net is owned by Daemon; callbacks must not own it back.
-struct Callbacks(Weak<Daemon>);
+/// Net is owned by Daemon; callbacks must not own it back. With no daemon,
+/// they answer as a node that is in no cluster.
+pub(crate) struct Callbacks(pub(crate) Weak<Daemon>);
 
 impl Callbacks {
     fn node(&self) -> Option<Arc<Node>> {

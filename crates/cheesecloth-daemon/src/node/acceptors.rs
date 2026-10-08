@@ -12,7 +12,7 @@ use cheesecloth_core::{
     Domain, NodeId,
     state::{ClusterState, Command},
 };
-use cheesecloth_paxos::Change;
+use pnyx::Change;
 use tracing::info;
 
 use super::{
@@ -48,12 +48,12 @@ pub fn configuration(
     base: &super::Agreed,
     st: &ClusterState,
     acceptors: BTreeSet<NodeId>,
-) -> Result<cheesecloth_paxos::Config<NodeId>, String> {
+) -> Result<pnyx::Config<NodeId>, String> {
     let settings = st.settings().ok_or("cluster has no settings")?;
     let n = acceptors.len();
     let latched = settings.strict_security && base.config.protected;
-    let protected = n >= 4
-        && (latched || n - cheesecloth_paxos::quorum(n, true) >= settings.buffer_nodes as usize);
+    let protected =
+        n >= 4 && (latched || n - pnyx::quorum(n, true) >= settings.buffer_nodes as usize);
     if latched && !protected {
         return Err("strict security forbids reducing the protected configuration".into());
     }
@@ -61,7 +61,7 @@ pub fn configuration(
 }
 
 pub fn check_set(
-    next: &cheesecloth_paxos::Config<NodeId>,
+    next: &pnyx::Config<NodeId>,
     base: &super::Agreed,
     st: &ClusterState,
 ) -> Result<(), String> {

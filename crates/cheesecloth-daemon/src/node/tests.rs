@@ -6,7 +6,7 @@ use cheesecloth_core::{
     Domain, Identity, NodeId, WgKey,
     state::{ClusterState, Command, CommandError, MemberInfo, Outcome, SettingChange, invite_id},
 };
-use cheesecloth_paxos::{Ballot, Request, store::Stored};
+use pnyx::{Ballot, Request, store::Stored};
 
 use crate::{
     RelayMode,
@@ -970,10 +970,10 @@ async fn leave_finishes_a_leave_whose_answer_was_lost() {
             command: Command::Leave,
         },
     );
-    let mut proposer = cheesecloth_paxos::Proposer::new(nb.me, (*nb.agreed()).clone());
+    let mut proposer = pnyx::Proposer::new(nb.me, (*nb.agreed()).clone());
     let transport = super::round::Acceptors::new(&nb);
-    let options = cheesecloth_paxos::Options::default();
-    cheesecloth_paxos::propose(&mut proposer, &transport, &options, |agreed| {
+    let options = pnyx::Options::default();
+    pnyx::propose(&mut proposer, &transport, &options, |agreed| {
         let mut next = agreed.value.clone();
         let request = cheesecloth_core::state::Request {
             at_ms: cheesecloth_core::now_ms().max(next.now_ms),
@@ -981,7 +981,7 @@ async fn leave_finishes_a_leave_whose_answer_was_lost() {
         };
         next.apply(&request).unwrap();
         next.record_step(&agreed.value, Some(request));
-        (cheesecloth_paxos::Change::Set(next), ())
+        (pnyx::Change::Set(next), ())
     })
     .await
     .unwrap();
@@ -1020,7 +1020,7 @@ async fn a_retried_round_returns_the_answer_stored_in_the_state_it_read() {
     // Round 1 applies the command; its answer is lost with the round.
     let mut proposed = false;
     let (change, answer1) = n.write_round(&command, &first, &mut proposed);
-    assert!(matches!(change, cheesecloth_paxos::Change::Set(_)));
+    assert!(matches!(change, pnyx::Change::Set(_)));
     assert!(proposed);
 
     // Another round applied it at another time, and that one was agreed: its
@@ -1038,7 +1038,7 @@ async fn a_retried_round_returns_the_answer_stored_in_the_state_it_read() {
     // A later round of the same write finds it applied, and returns the
     // answer stored in the state it read.
     let (change, answer) = n.write_round(&command, &agreed, &mut proposed);
-    assert_eq!(change, cheesecloth_paxos::Change::Keep);
+    assert_eq!(change, pnyx::Change::Keep);
     assert_eq!(answer, Ok(stored));
 
     // A separate write of the same command is a replay.
@@ -1172,7 +1172,7 @@ async fn giving_up_the_role_is_refused_without_a_present_majority() {
     let agreed = five_acceptors(&h);
     // Without this node: four members, three acceptors, none present.
     let (change, result) = h.node.give_up_round(&agreed);
-    assert_eq!(change, cheesecloth_paxos::Change::Keep);
+    assert_eq!(change, pnyx::Change::Keep);
     assert_eq!(result, Err(Refused::NoPresentMajority));
 }
 
@@ -1496,7 +1496,7 @@ async fn certified_shrinks_can_progress_from_four_to_three_to_two_and_grow_again
                         .unwrap();
                 let mut next = agreed.value.clone();
                 next.record_step(&agreed.value, None);
-                (cheesecloth_paxos::Change::Close(next, config), ())
+                (pnyx::Change::Close(next, config), ())
             })
             .await
             .unwrap();
@@ -1522,7 +1522,7 @@ async fn certified_shrinks_can_progress_from_four_to_three_to_two_and_grow_again
                 super::acceptors::configuration(agreed, &agreed.value, ids.clone()).unwrap();
             let mut next = agreed.value.clone();
             next.record_step(&agreed.value, None);
-            (cheesecloth_paxos::Change::Close(next, config), ())
+            (pnyx::Change::Close(next, config), ())
         })
         .await
         .unwrap();

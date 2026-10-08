@@ -126,15 +126,15 @@ fn node(dir: &Arc<Dir>) -> Node {
 fn node_with(dir: &Arc<Dir>, opts: NetOptions) -> Node {
     let identity = Arc::new(Identity::generate());
     let id = identity.node_id();
-    let net = Net::bind(opts, identity).unwrap();
+    let bound = Net::bind(opts, identity).unwrap();
     let handler = Arc::new(Echo {
         me: id,
         states: Mutex::default(),
         runs: Default::default(),
-        net: Mutex::new(Some(net.clone())),
+        net: Mutex::new(None),
     });
-    net.set_directory(dir.clone());
-    net.set_handler(handler.clone());
+    let net = bound.start(dir.clone(), handler.clone());
+    *handler.net.lock().unwrap() = Some(net.clone());
     dir.addrs
         .lock()
         .unwrap()

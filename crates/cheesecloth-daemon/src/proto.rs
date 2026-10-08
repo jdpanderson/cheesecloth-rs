@@ -6,7 +6,7 @@ use cheesecloth_core::{
     ClusterId, NodeId, Signed,
     state::{ClusterState, MemberInfo},
 };
-use cheesecloth_paxos::Reply;
+use pnyx::Reply;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 
 // Control-plane service numbers.
 
-/// A CASPaxos request to this node's acceptor (`cheesecloth_paxos::Request`).
+/// A CASPaxos request to this node's acceptor (`pnyx::Request`).
 /// The answer is a `PaxosAnswer`.
 pub const SVC_PAXOS: u8 = 1;
 /// "Send me your agreed state, and the transitions from this configuration

@@ -133,8 +133,13 @@ back unfinished candidates. A closing certificate anchors the next configuration
 This is an implementation argument, **not a machine-checked Byzantine proof**.
 Tests cover forged and replayed evidence, phase confusion, proposal substitution,
 durable endorsements, partial acceptance, configuration recovery and adaptive
-policy. Model checks cover the generic engine's crash faults and reconfiguration;
-they do not model the daemon's Byzantine evidence layer.
+policy. The engine, [pnyx](https://crates.io/crates/pnyx), has its own checks:
+a Stateright model checks crashes and reconfiguration, and property tests
+check the acceptor's promises against arbitrary requests. They do not model the
+daemon's Byzantine evidence layer. The acceptor's part of the authenticated
+round is described under
+[*Byzantine faults*](https://docs.rs/pnyx/0.1/pnyx/#byzantine-faults) in
+pnyx's documentation.
 
 The design draws on [CASPaxos](https://arxiv.org/html/1802.07000v9) and
 [Byzantizing Paxos by Refinement](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/12/Byzantizing-Paxos-by-Refinement.pdf).

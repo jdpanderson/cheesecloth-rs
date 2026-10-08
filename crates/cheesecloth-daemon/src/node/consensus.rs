@@ -22,7 +22,7 @@ use cheesecloth_core::{
         Response, SignedCommand, invite_id,
     },
 };
-use cheesecloth_paxos::{Change, Options, Reply, propose};
+use pnyx::{Change, Options, Reply, propose};
 use tracing::{debug, info, warn};
 
 use super::{
@@ -55,7 +55,7 @@ const HAND_OFF_DEADLINE: Duration = Duration::from_secs(30);
 /// again while leaving.
 pub(super) const LEAVE_ATTEMPTS: u32 = 3;
 
-type PaxosRequest = cheesecloth_paxos::Request<NodeId, ClusterState>;
+type PaxosRequest = pnyx::Request<NodeId, ClusterState>;
 
 /// Why a command was not proposed.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -374,7 +374,7 @@ impl Node {
     }
 
     /// Runs one change, then learns the result. `change` may be called more
-    /// than once (see `cheesecloth_paxos::propose`).
+    /// than once (see `pnyx::propose`).
     pub(super) async fn propose_change<R>(
         &self,
         change: impl FnMut(&Agreed) -> (Change<NodeId, ClusterState>, R),
@@ -383,11 +383,9 @@ impl Node {
             .run(async {
                 let mut proposer = self.proposer.lock().await;
                 proposer.learn((*self.agreed()).clone());
-                let options = Options {
-                    request_timeout: REQUEST_TIMEOUT,
-                    deadline: CHANGE_DEADLINE,
-                    ..Options::default()
-                };
+                let mut options = Options::default();
+                options.request_timeout = REQUEST_TIMEOUT;
+                options.deadline = CHANGE_DEADLINE;
                 let acceptors = Acceptors::new(self);
                 let result = propose(&mut proposer, &acceptors, &options, change).await;
                 // A failed change may still have learned a newer state from an
@@ -454,8 +452,7 @@ impl Node {
         proof: Option<Certificate>,
     ) -> Result<PaxosAnswer, AcceptError> {
         let ballot = match &req {
-            cheesecloth_paxos::Request::Prepare { ballot, .. }
-            | cheesecloth_paxos::Request::Accept { ballot, .. } => ballot,
+            pnyx::Request::Prepare { ballot, .. } | pnyx::Request::Accept { ballot, .. } => ballot,
         };
         if ballot.node != from {
             return Err(AcceptError::Refused(format!(
@@ -464,8 +461,7 @@ impl Node {
             )));
         }
         let config = match &req {
-            cheesecloth_paxos::Request::Prepare { config, .. }
-            | cheesecloth_paxos::Request::Accept { config, .. } => *config,
+            pnyx::Request::Prepare { config, .. } | pnyx::Request::Accept { config, .. } => *config,
         };
         let mut acceptor = self.acceptor.clone().lock_owned().await;
         if let Some(learned) = acceptor.acceptor().learned() {
@@ -477,34 +473,30 @@ impl Node {
         let (reply, share, stale_cert, promise) = self
             .lifetime
             .blocking(move || {
-                let reply =
-                    if let cheesecloth_paxos::Request::Accept { value, ballot, .. } = &req {
-                        let proof = proof.ok_or_else(|| {
-                            AcceptError::Refused(
-                                "accept requires a verification certificate".into(),
-                            )
-                        })?;
-                        let learned = acceptor
-                            .acceptor()
-                            .learned()
-                            .ok_or_else(|| AcceptError::Refused("no trusted state".into()))?;
-                        let trusted = if value.config.number == learned.value.config.number {
-                            &learned.value.config
-                        } else {
-                            learned.value.active_config()
-                        };
-                        proof
-                            .check_config(trusted, true)
-                            .map_err(|e| AcceptError::Refused(e.to_string()))?;
-                        if proof.ballot != *ballot || proof.header != Header::of(cluster_id, value)
-                        {
-                            return Err(AcceptError::Refused("accept proof mismatch".into()));
-                        }
-                        acceptor.handle_proven(req, proof)
+                let reply = if let pnyx::Request::Accept { value, ballot, .. } = &req {
+                    let proof = proof.ok_or_else(|| {
+                        AcceptError::Refused("accept requires a verification certificate".into())
+                    })?;
+                    let learned = acceptor
+                        .acceptor()
+                        .learned()
+                        .ok_or_else(|| AcceptError::Refused("no trusted state".into()))?;
+                    let trusted = if value.config.number == learned.value.config.number {
+                        &learned.value.config
                     } else {
-                        acceptor.handle(req)
+                        learned.value.active_config()
+                    };
+                    proof
+                        .check_config(trusted, true)
+                        .map_err(|e| AcceptError::Refused(e.to_string()))?;
+                    if proof.ballot != *ballot || proof.header != Header::of(cluster_id, value) {
+                        return Err(AcceptError::Refused("accept proof mismatch".into()));
                     }
-                    .map_err(|e| AcceptError::Refused(format!("{e:#}")))?;
+                    acceptor.handle_proven(req, proof)
+                } else {
+                    acceptor.handle(req)
+                }
+                .map_err(|e| AcceptError::Refused(format!("{e:#}")))?;
                 let a = acceptor.acceptor();
                 let accepted = match &reply {
                     Reply::Accepted { config, ballot } => Some((*config, ballot)),
@@ -653,9 +645,15 @@ impl Node {
             let mut acceptor = self.acceptor.clone().lock_owned().await;
             let (saved, proof) = (chosen.clone(), cert.clone());
             // Saving syncs the disk: not on a worker thread.
-            self.lifetime.blocking(move || acceptor.learn(saved, proof))
+            let learned = self.lifetime.blocking(move || acceptor.learn(saved, proof))
                 .await?
                 .context("saving the agreed state")?;
+            // The version is newer than the one learned, so the acceptor
+            // ignores the value only if it goes back to an older
+            // configuration. Then it saved nothing.
+            if !learned {
+                bail!("this node's acceptor ignored the agreed state");
+            }
             let previous = current.value.active_config();
             let installed = chosen.value.active_config();
             if previous.protected && !installed.protected {

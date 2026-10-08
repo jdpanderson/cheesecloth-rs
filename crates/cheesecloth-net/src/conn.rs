@@ -123,9 +123,7 @@ impl Net {
         // An older connection stays up until it idles out; it's still served.
         drop(old);
         self.0.dial_failed.lock().remove(&node);
-        if let Some(h) = self.0.handler.get() {
-            h.connected(node);
-        }
+        self.0.handler.connected(node);
     }
 
     /// A connection to `node`: the existing one, or a new direct dial.
@@ -146,7 +144,7 @@ impl Net {
         {
             bail!("{} was unreachable recently", node.short());
         }
-        let addrs = self.dir().map(|d| d.dial_addrs(&node)).unwrap_or_default();
+        let addrs = self.dir().dial_addrs(&node);
         if addrs.is_empty() {
             bail!("no address to dial {}", node.short());
         }
@@ -213,7 +211,7 @@ impl Net {
                 };
                 let probe =
                     tls::requested_server_name(&conn).as_deref() == Some(tls::PROBE_SERVER_NAME);
-                let member = net.dir().is_some_and(|d| d.is_member(&peer));
+                let member = net.dir().is_member(&peer);
                 trace!(peer = %peer.short(), %remote, member, probe, "accepted");
                 if member {
                     member_limits(&conn);
@@ -298,7 +296,7 @@ impl Net {
                     });
                 }
                 _ = tick.tick() => {
-                    if self.dir().is_some_and(|d| d.is_member(&peer)) {
+                    if self.dir().is_member(&peer) {
                         return true;
                     }
                     if started.elapsed() >= self.0.guest_lifetime {
@@ -346,7 +344,7 @@ impl Net {
         peer: NodeId,
         recv: &mut quinn::RecvStream,
     ) -> Result<(Kind, Vec<u8>)> {
-        let member = self.dir().is_some_and(|d| d.is_member(&peer));
+        let member = self.dir().is_member(&peer);
         if member {
             return self.read_request_inner(peer, recv, true).await;
         }
@@ -412,9 +410,7 @@ impl Net {
     pub(crate) async fn serve_uni(&self, peer: NodeId, mut recv: quinn::RecvStream) -> Result<()> {
         let (kind, body) = self.read_request(peer, &mut recv).await?;
         ensure!(kind == Kind::State, "unexpected one-way stream");
-        if let Some(h) = self.0.handler.get() {
-            h.state(peer, body);
-        }
+        self.0.handler.state(peer, body);
         Ok(())
     }
 
@@ -425,11 +421,11 @@ impl Net {
         kind: Kind,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, String> {
-        let handler = self.0.handler.get().ok_or("not ready")?.clone();
+        let handler = self.0.handler.clone();
         if kind == Kind::Join {
             return handler.join(peer, body).await;
         }
-        if !self.dir().is_some_and(|d| d.is_member(&peer)) {
+        if !self.dir().is_member(&peer) {
             return Err("not a member".into());
         }
         let decode_err = |e: postcard::Error| e.to_string();

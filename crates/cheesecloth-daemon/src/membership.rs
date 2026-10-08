@@ -12,8 +12,8 @@ use cheesecloth_core::{
     token::{InviteToken, TokenPeer},
 };
 use cheesecloth_net::CallError;
-use cheesecloth_paxos::Acceptor;
 use ipnet::Ipv4Net;
+use pnyx::Acceptor;
 use tracing::{info, warn};
 
 use crate::{

@@ -136,7 +136,7 @@ async fn failed_cancellation_preserves_the_attempt_and_can_be_retried() {
     );
     // Earlier cleanup can succeed; the pending record must still exist
     // when a later file cannot be removed.
-    std::fs::write(d.files.acceptor(), b"partial admission").unwrap();
+    StoredAcceptor::create(d.files.acceptor(), pnyx::Acceptor::default()).unwrap();
     std::fs::create_dir(d.files.transitions()).unwrap();
     for force in [false, true] {
         let error = d.leave(force).await.unwrap_err();
@@ -167,8 +167,9 @@ async fn invalid_or_unsaved_admission_keeps_the_join_pending_for_retry() {
     }
     assert!(d.pending_reply(cluster, &attempt, invalid).await.is_err());
     assert!(d.is_pending(&attempt));
-    // Failing admission must not delete the saved pending attempt first.
-    std::fs::create_dir(d.files.acceptor()).unwrap();
+    // Failing admission must not delete the saved pending attempt first. A
+    // directory in place of the transitions file makes admission fail.
+    std::fs::create_dir(d.files.transitions()).unwrap();
     assert!(
         d.pending_reply(cluster, &attempt, reply.clone())
             .await
@@ -176,7 +177,7 @@ async fn invalid_or_unsaved_admission_keeps_the_join_pending_for_retry() {
     );
     assert!(d.is_pending(&attempt));
     assert!(d.files.load_cluster().unwrap().unwrap().pending.is_some());
-    std::fs::remove_dir(d.files.acceptor()).unwrap();
+    std::fs::remove_dir(d.files.transitions()).unwrap();
     assert!(d.pending_reply(cluster, &attempt, reply).await.unwrap());
     assert!(d.node().is_some());
     d.shutdown().await;
@@ -229,7 +230,7 @@ async fn joining_requires_acceptance_in_a_valid_configuration() {
         assert!(format!("{error:#}").contains(expected), "{error:#}");
         assert!(d.is_pending(&attempt));
         assert!(d.files.load_cluster().unwrap().unwrap().pending.is_some());
-        assert!(!d.files.acceptor().exists());
+        assert!(!crate::testing::has_acceptor(&d.files));
     }
     assert!(d.pending_reply(cluster, &attempt, reply).await.unwrap());
     assert!(d.node().is_some());

@@ -1,6 +1,22 @@
 use super::*;
 use cheesecloth_core::Identity;
-use cheesecloth_paxos::{Acceptor, store::Stored};
+use pnyx::{Acceptor, store::Stored};
+
+#[test]
+fn a_failed_change_reports_every_cause_of_the_transport_error() {
+    let cause = anyhow::anyhow!("connection refused").context("request to a1b2 failed");
+    let failed: pnyx::Error<TransportError> = pnyx::Error::Timeout {
+        last: Some(pnyx::RequestError::Transport(cause.into())),
+    };
+    let e = format!(
+        "{:#}",
+        anyhow::Error::from(failed).context("couldn't agree on the change")
+    );
+    assert!(
+        e.ends_with("request to a1b2 failed: connection refused"),
+        "{e}"
+    );
+}
 
 #[test]
 fn counter_feedback_must_match_the_request_and_existing_jump_limit() {
@@ -8,7 +24,7 @@ fn counter_feedback_must_match_the_request_and_existing_jump_limit() {
         counter: 7,
         node: NodeId([1; 32]),
     };
-    for counter in [7, 7 + cheesecloth_paxos::MAX_COUNTER_STEP] {
+    for counter in [7, 7 + pnyx::MAX_COUNTER_STEP] {
         let reply = Reply::Rejected {
             config: 3,
             ballot: ballot.clone(),
@@ -20,7 +36,7 @@ fn counter_feedback_must_match_the_request_and_existing_jump_limit() {
         assert!(check_feedback(3, &ballot, &reply).is_ok());
         assert!(check_feedback(4, &ballot, &reply).is_err());
     }
-    for counter in [6, 8 + cheesecloth_paxos::MAX_COUNTER_STEP, u64::MAX] {
+    for counter in [6, 8 + pnyx::MAX_COUNTER_STEP, u64::MAX] {
         let reply = Reply::Rejected {
             config: 3,
             ballot: ballot.clone(),
@@ -46,13 +62,13 @@ fn counter_feedback_must_match_the_request_and_existing_jump_limit() {
         );
     }
     let high = Ballot {
-        counter: 2 * cheesecloth_paxos::MAX_COUNTER_STEP,
+        counter: 2 * pnyx::MAX_COUNTER_STEP,
         ..ballot
     };
     let reply = Reply::TooHigh {
         config: 3,
         ballot: high.clone(),
-        limit: cheesecloth_paxos::MAX_COUNTER_STEP,
+        limit: pnyx::MAX_COUNTER_STEP,
     };
     assert!(check_feedback(3, &high, &reply).is_ok());
 }

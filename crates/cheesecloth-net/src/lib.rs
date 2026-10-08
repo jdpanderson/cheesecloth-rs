@@ -30,7 +30,7 @@ use std::{
     future::Future,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     pin::Pin,
-    sync::{Arc, OnceLock, atomic::AtomicU64},
+    sync::{Arc, atomic::AtomicU64},
     time::{Duration, Instant},
 };
 
@@ -123,8 +123,8 @@ struct Inner {
     me: NodeId,
     endpoint: Endpoint,
     transport: Arc<TransportConfig>,
-    dir: OnceLock<Arc<dyn Directory>>,
-    handler: OnceLock<Arc<dyn Handler>>,
+    dir: Arc<dyn Directory>,
+    handler: Arc<dyn Handler>,
     conns: Mutex<HashMap<NodeId, Connection>>,
     dial_locks: Mutex<HashMap<NodeId, Arc<tokio::sync::Mutex<()>>>>,
     dial_failed: Mutex<HashMap<NodeId, Instant>>,
@@ -197,10 +197,62 @@ pub fn canonical(addr: SocketAddr) -> SocketAddr {
     SocketAddr::new(addr.ip().to_canonical(), addr.port())
 }
 
+/// A bound control-plane endpoint that doesn't accept connections yet (see
+/// `Net::bind`).
+pub struct Bound {
+    opts: NetOptions,
+    identity: Arc<Identity>,
+    endpoint: Endpoint,
+    transport: Arc<TransportConfig>,
+}
+
+impl Bound {
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.endpoint.local_addr()?)
+    }
+
+    /// Starts accepting connections. `dir` says who the members are, and
+    /// `handler` answers their requests.
+    pub fn start(self, dir: Arc<dyn Directory>, handler: Arc<dyn Handler>) -> Net {
+        let Bound {
+            opts,
+            identity,
+            endpoint,
+            transport,
+        } = self;
+        let me = identity.node_id();
+        let net = Net(Arc::new(Inner {
+            identity,
+            me,
+            endpoint,
+            transport,
+            dir,
+            handler,
+            conns: Mutex::new(HashMap::new()),
+            dial_locks: Mutex::new(HashMap::new()),
+            dial_failed: Mutex::new(HashMap::new()),
+            seen: Mutex::new(HashMap::new()),
+            seq: AtomicU64::new(0),
+            clocks: Mutex::new(HashMap::new()),
+            guest_read_timeout: opts.guest_read_timeout,
+            guest_idle: opts.guest_idle,
+            guest_lifetime: opts.guest_lifetime,
+            max_guests: opts.max_guests,
+            max_guests_per_addr: opts.max_guests_per_addr,
+            guests: Mutex::default(),
+        }));
+        tokio::spawn(net.clone().accept_loop());
+        net
+    }
+}
+
 impl Net {
     /// Binds the control-plane endpoint. `[::]:port` binds dual-stack, falling
     /// back to IPv4 only if IPv6 is unavailable.
-    pub fn bind(opts: NetOptions, identity: Arc<Identity>) -> Result<Net> {
+    ///
+    /// The endpoint accepts no connections until `Bound::start` gives it its
+    /// directory and handler.
+    pub fn bind(opts: NetOptions, identity: Arc<Identity>) -> Result<Bound> {
         let transport = transport_config(&opts)?;
         let server = tls::server_config(&identity, transport.clone())?;
         let socket = match bind_socket(opts.bind) {
@@ -217,39 +269,12 @@ impl Net {
             socket,
             Arc::new(quinn::TokioRuntime),
         )?;
-        let me = identity.node_id();
-        let net = Net(Arc::new(Inner {
+        Ok(Bound {
+            opts,
             identity,
-            me,
             endpoint,
             transport,
-            dir: OnceLock::new(),
-            handler: OnceLock::new(),
-            conns: Mutex::new(HashMap::new()),
-            dial_locks: Mutex::new(HashMap::new()),
-            dial_failed: Mutex::new(HashMap::new()),
-            seen: Mutex::new(HashMap::new()),
-            seq: AtomicU64::new(0),
-            clocks: Mutex::new(HashMap::new()),
-            guest_read_timeout: opts.guest_read_timeout,
-            guest_idle: opts.guest_idle,
-            guest_lifetime: opts.guest_lifetime,
-            max_guests: opts.max_guests,
-            max_guests_per_addr: opts.max_guests_per_addr,
-            guests: Mutex::default(),
-        }));
-        tokio::spawn(net.clone().accept_loop());
-        Ok(net)
-    }
-
-    /// Must be called once, before the node takes part in the cluster.
-    pub fn set_directory(&self, dir: Arc<dyn Directory>) {
-        let _ = self.0.dir.set(dir);
-    }
-
-    /// Must be called once, before the node takes part in the cluster.
-    pub fn set_handler(&self, handler: Arc<dyn Handler>) {
-        let _ = self.0.handler.set(handler);
+        })
     }
 
     pub fn node_id(&self) -> NodeId {
@@ -260,12 +285,12 @@ impl Net {
         Ok(self.0.endpoint.local_addr()?)
     }
 
-    fn dir(&self) -> Option<&Arc<dyn Directory>> {
-        self.0.dir.get()
+    fn dir(&self) -> &Arc<dyn Directory> {
+        &self.0.dir
     }
 
     fn cluster_id(&self) -> Option<ClusterId> {
-        self.dir().and_then(|d| d.cluster_id())
+        self.dir().cluster_id()
     }
 
     pub fn close(&self) {

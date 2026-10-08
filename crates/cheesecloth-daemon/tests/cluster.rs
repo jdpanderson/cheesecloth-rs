@@ -544,6 +544,7 @@ async fn an_unreadable_state_directory_is_explained() {
     drop(daemon);
 
     // As if written by an older version, in another format.
+    // A start with no acceptor state is tested in `node::lifecycle_tests`.
     std::fs::write(_dir.path().join("acceptor.bin"), [0xff; 40]).unwrap();
     let e = Daemon::start(options("a", RelayMode::Always, &_dir))
         .await
@@ -551,18 +552,7 @@ async fn an_unreadable_state_directory_is_explained() {
         .expect("the state can't be read");
     let e = format!("{e:#}");
     assert!(e.contains("older version of cheesecloth"), "{e}");
-    assert!(e.contains("delete cluster.json, acceptor.bin"), "{e}");
-
-    // No acceptor state at all, as in a directory from before it existed.
-    std::fs::remove_file(_dir.path().join("acceptor.bin")).unwrap();
-    let e = Daemon::start(options("a", RelayMode::Always, &_dir))
-        .await
-        .err()
-        .expect("there is no state");
-    assert!(
-        format!("{e:#}").contains("older version of cheesecloth"),
-        "{e:#}"
-    );
+    assert!(e.contains("delete cluster.json, acceptor.*"), "{e}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

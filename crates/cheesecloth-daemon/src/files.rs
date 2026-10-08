@@ -1,13 +1,14 @@
 //! The daemon's state directory.
 
 use std::{
-    fs, io,
+    fs,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result};
 use cheesecloth_core::{ClusterId, token::TokenPeer, write_private};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// A join waiting for approvals.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -93,9 +94,16 @@ impl Files {
         Ok(())
     }
 
-    /// This node's acceptor state (see `cheesecloth_paxos::store`), which
-    /// holds the latest agreed state this node has learned.
+    /// This node's acceptor state (see `pnyx::store`), which holds the latest
+    /// agreed state this node has learned. pnyx decides which files it uses.
     pub fn acceptor(&self) -> PathBuf {
+        self.dir.join("acceptor")
+    }
+
+    /// The acceptor state in the format of cheesecloth 0.1.0 and earlier: one
+    /// file, with no header. If it exists, it holds the newest state, and
+    /// `Node::start` moves it to the new files (see `node::open_acceptor`).
+    pub fn legacy_acceptor(&self) -> PathBuf {
         self.dir.join("acceptor.bin")
     }
 
@@ -123,7 +131,20 @@ impl Files {
     /// Discards a partially prepared admission without removing its pending
     /// record. A failed join can still be retried or cancelled after restart.
     pub fn delete_consensus(&self) -> Result<()> {
-        self.remove_files([self.acceptor(), self.transitions()])
+        // The old file goes first, and durably: if it came back after the
+        // new store was removed, the next start would move it in again.
+        self.delete_legacy_acceptor()?;
+        let acceptor = self.acceptor();
+        pnyx::store::remove(&acceptor)
+            .with_context(|| format!("removing the acceptor state {}", acceptor.display()))?;
+        self.remove_files([self.transitions()])
+    }
+
+    /// Removes the acceptor state in the old format, and syncs the directory.
+    pub fn delete_legacy_acceptor(&self) -> Result<()> {
+        self.remove_files([self.legacy_acceptor()])?;
+        fs::File::open(&self.dir)?.sync_all()?;
+        Ok(())
     }
 
     /// Cancels a pending join durably. There is no running acceptor. Keep the
@@ -169,6 +190,36 @@ impl Files {
             }
             Err(e) => Err(e.into()),
         }
+    }
+}
+
+/// Writes `value` to `path`, so that a crash leaves either the old or the new
+/// contents: a new file is written and synced, then renamed over the old one.
+pub fn save<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+    let bytes = postcard::to_stdvec(value).map_err(io::Error::other)?;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    let mut file = fs::File::create(&tmp)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    fs::rename(&tmp, path)?;
+    // The rename is only durable once the directory is synced.
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    fs::File::open(dir)?.sync_all()
+}
+
+/// Reads a value written by [`save`], or `None` if there is no file.
+pub fn load<T: DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
+    match fs::read(path) {
+        Ok(bytes) => postcard::from_bytes(&bytes)
+            .map(Some)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
