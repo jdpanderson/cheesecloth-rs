@@ -35,7 +35,7 @@ if-addrs = "0.15"
 ipnet = { version = "2", features = ["serde"] }
 libc = "0.2"
 parking_lot = "0.12"
-port-control-client = { version = "0.2", default-features = false, features = ["upnp", "pcp"] }
+port-control-client = { version = "0.2.2", default-features = false, features = ["upnp", "pcp"] }
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rand = "0.10"

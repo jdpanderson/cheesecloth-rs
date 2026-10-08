@@ -88,10 +88,31 @@ pub struct StatusView {
     pub wg_backend: Option<String>,
     pub wg_interface: String,
     pub wg_port: u16,
-    /// Router port mappings, e.g. "wireguard 203.0.113.5:40123".
+    /// Router port mapping: `None` when it is off, else one entry per port.
     #[serde(default)]
-    pub port_mappings: Vec<String>,
+    pub port_mapping: Option<Vec<PortMapView>>,
     pub warnings: Vec<String>,
+}
+
+/// The router port mapping of one local port.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortMapView {
+    /// "wireguard" or "control".
+    pub port: String,
+    pub local_port: u16,
+    /// The mapping, once the router grants it.
+    pub mapped: Option<PortMapGrant>,
+    /// Why the last attempt to get or renew the mapping failed.
+    pub error: Option<String>,
+}
+
+/// A mapping the router has granted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortMapGrant {
+    /// The router's address and port.
+    pub external: SocketAddr,
+    /// The protocol it was granted with: "UPnP", "PCP" or "NAT-PMP".
+    pub method: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

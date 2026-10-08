@@ -37,7 +37,7 @@ impl Daemon {
             wg_backend: None,
             wg_interface: self.opts.interface.clone(),
             wg_port: self.opts.wg_port,
-            port_mappings: Vec::new(),
+            port_mapping: None,
             warnings: Vec::new(),
         };
         let node = match &*self.phase.read() {
@@ -71,13 +71,8 @@ impl Daemon {
             let f = node.facts.lock();
             v.relay = f.relay;
             v.public = f.public;
-            if let Some(a) = f.mapped_wg {
-                v.port_mappings.push(format!("wireguard {a}"));
-            }
-            if let Some(a) = f.mapped_control {
-                v.port_mappings.push(format!("control {a}"));
-            }
         }
+        v.port_mapping = node.port_mapping();
         v.keepalive = node.wg_keepalive();
         v.acceptors = agreed.value.acceptors().iter().copied().collect();
         let config = agreed.value.active_config();

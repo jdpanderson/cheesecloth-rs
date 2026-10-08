@@ -11,6 +11,8 @@ use std::{net::SocketAddr, num::NonZeroU16};
 use port_control_client::{Config, Method, PortMapping, Protocol};
 use tracing::info;
 
+use crate::api::{PortMapGrant, PortMapView};
+
 /// Each mapping has a background task that gets it, renews it, and asks again
 /// after a minute if the router hasn't granted it.
 pub struct PortMaps {
@@ -33,6 +35,20 @@ fn external(m: &Option<PortMapping>) -> Option<SocketAddr> {
     m.as_ref()?.mapping().map(|m| SocketAddr::V4(m.external))
 }
 
+fn view(port: &str, m: &Option<PortMapping>) -> Option<PortMapView> {
+    let m = m.as_ref()?;
+    let status = m.status();
+    Some(PortMapView {
+        port: port.into(),
+        local_port: m.local_port().get(),
+        mapped: status.mapping().map(|g| PortMapGrant {
+            external: SocketAddr::V4(g.external),
+            method: g.method.to_string(),
+        }),
+        error: status.error().map(ToString::to_string),
+    })
+}
+
 async fn stop(m: &Option<PortMapping>) {
     if let Some(m) = m {
         m.stop().await;
@@ -46,6 +62,14 @@ impl PortMaps {
             wg: start(wg_port),
             control: start(control_port),
         }
+    }
+
+    /// The state of each mapping, for `status`.
+    pub fn views(&self) -> Vec<PortMapView> {
+        [view("wireguard", &self.wg), view("control", &self.control)]
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     /// The router's address and port for our WireGuard port, if mapped.
@@ -78,6 +102,7 @@ mod tests {
         let maps = PortMaps::start(0, 0);
         assert!(maps.wg.is_none() && maps.control.is_none());
         assert_eq!((maps.wg(), maps.control()), (None, None));
+        assert!(maps.views().is_empty());
         tokio::time::timeout(std::time::Duration::from_millis(100), maps.stop())
             .await
             .expect("nothing to release");

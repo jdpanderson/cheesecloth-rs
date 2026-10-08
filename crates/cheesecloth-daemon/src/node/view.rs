@@ -118,6 +118,11 @@ impl Node {
         })
     }
 
+    /// Router port mappings: `None` when port mapping is off.
+    pub fn port_mapping(&self) -> Option<Vec<crate::api::PortMapView>> {
+        self.portmaps.as_ref().map(|p| p.views())
+    }
+
     pub fn overlay_nets(&self) -> Vec<IpNet> {
         let mut nets = vec![IpNet::V6(cheesecloth_core::addr::ula_prefix(
             &self.cluster_id,

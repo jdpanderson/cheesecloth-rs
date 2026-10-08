@@ -183,6 +183,7 @@ fn the_cli_drives_a_cluster() {
         "consensus state version",
         "wireguard mock on mock-alpha",
         "control   127.0.0.1:",
+        "portmap   off",
     ];
     // The role and the interface are filled in by the daemon's loops.
     wait_until("the role and the interface", || {

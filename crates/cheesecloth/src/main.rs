@@ -8,7 +8,7 @@ use cheesecloth_daemon::{
     Options, RelayMode,
     api::{
         self, ApiRequest, ConfigView, InitView, InviteView, JoinView, LeaveView, PeerView,
-        ProposalView, StatusView,
+        PortMapView, ProposalView, StatusView,
     },
 };
 use cheesecloth_wg::BackendKind;
@@ -310,6 +310,20 @@ fn age(secs: Option<u64>) -> String {
     }
 }
 
+/// One port's router mapping, e.g. "wireguard 51820 -> 203.0.113.5:51820 (UPnP)".
+fn port_map_line(m: &PortMapView) -> String {
+    let what = format!("{} {}", m.port, m.local_port);
+    match (&m.mapped, &m.error) {
+        (Some(g), None) => format!("{what} -> {} ({})", g.external, g.method),
+        (Some(g), Some(e)) => format!(
+            "{what} -> {} ({}), renewal failed: {e}",
+            g.external, g.method
+        ),
+        (None, Some(e)) => format!("{what} not mapped: {e}"),
+        (None, None) => format!("{what} asking the router"),
+    }
+}
+
 fn print_status(s: &StatusView) {
     println!("node      {} ({})", s.node_id, s.name);
     match s.phase.as_str() {
@@ -390,8 +404,13 @@ fn print_status(s: &StatusView) {
     if let Some(a) = s.control_addr {
         println!("control   {a}");
     }
-    for m in &s.port_mappings {
-        println!("mapped    {m}");
+    match &s.port_mapping {
+        None => println!("portmap   off"),
+        Some(maps) => {
+            for m in maps {
+                println!("portmap   {}", port_map_line(m));
+            }
+        }
     }
     for w in &s.warnings {
         println!("warning   {w}");
@@ -503,4 +522,43 @@ fn print_config(c: &ConfigView, key: Option<&str>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use cheesecloth_daemon::api::PortMapGrant;
+
+    use super::*;
+
+    #[test]
+    fn port_map_lines_show_the_method_or_the_failure() {
+        let m = |mapped: Option<(&str, &str)>, error: Option<&str>| PortMapView {
+            port: "wireguard".into(),
+            local_port: 51820,
+            mapped: mapped.map(|(external, method)| PortMapGrant {
+                external: external.parse().unwrap(),
+                method: method.into(),
+            }),
+            error: error.map(Into::into),
+        };
+        assert_eq!(
+            port_map_line(&m(None, None)),
+            "wireguard 51820 asking the router"
+        );
+        assert_eq!(
+            port_map_line(&m(Some(("203.0.113.5:40123", "UPnP")), None)),
+            "wireguard 51820 -> 203.0.113.5:40123 (UPnP)"
+        );
+        assert_eq!(
+            port_map_line(&m(None, Some("UPnP: no gateway; PCP: timed out"))),
+            "wireguard 51820 not mapped: UPnP: no gateway; PCP: timed out"
+        );
+        assert_eq!(
+            port_map_line(&m(
+                Some(("203.0.113.5:40123", "PCP")),
+                Some("PCP: timed out")
+            )),
+            "wireguard 51820 -> 203.0.113.5:40123 (PCP), renewal failed: PCP: timed out"
+        );
+    }
 }
