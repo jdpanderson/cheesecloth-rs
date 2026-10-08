@@ -230,25 +230,30 @@ impl Node {
             }
             return Ok(());
         }
-        let ok = if others.is_empty() {
-            // Nobody to ask; a lone node with a candidate address counts as public.
-            true
-        } else {
-            let mut ok = false;
-            'outer: for via in &vias {
-                for addr in &candidates {
-                    match self.net.probe(*via, *addr).await {
-                        Ok(()) => {
-                            ok = true;
-                            break 'outer;
-                        }
-                        Err(e) => debug!(%addr, via = %via.short(), "dial-back failed: {e:#}"),
+        // The member that dialed us back, and the address it reached.
+        let mut confirmed = None;
+        'outer: for via in &vias {
+            for addr in &candidates {
+                match self.net.probe(*via, *addr).await {
+                    Ok(()) => {
+                        confirmed = Some((*via, *addr));
+                        break 'outer;
                     }
+                    Err(e) => debug!(%addr, via = %via.short(), "dial-back failed: {e:#}"),
                 }
             }
-            ok
-        };
-        info!(public = ok, candidates = ?candidates, "reachability checked");
+        }
+        // Nobody to ask; a lone node with a candidate address counts as public.
+        let ok = others.is_empty() || confirmed.is_some();
+        match confirmed {
+            Some((via, addr)) => {
+                info!(public = ok, via = %via.short(), %addr, "reachability checked");
+            }
+            None => {
+                let asked: Vec<String> = vias.iter().map(NodeId::short).collect();
+                info!(public = ok, ?asked, ?candidates, "reachability checked");
+            }
+        }
         self.facts.lock().last_probe = Some((Instant::now(), candidates, ok));
         self.refresh_facts();
         Ok(())
