@@ -40,7 +40,8 @@ pub struct Options {
     pub socket: Option<PathBuf>,
     /// Address to bind the control plane to (`::` for all, dual-stack).
     pub bind_ip: IpAddr,
-    /// Control-plane (QUIC) UDP port.
+    /// Control-plane (QUIC) UDP port. With 0, the system chooses one, and
+    /// `Daemon::start` sets this to it.
     pub listen_port: u16,
     /// WireGuard UDP port.
     pub wg_port: u16,

@@ -250,7 +250,7 @@ pub async fn daemon(name: &str, relay: RelayMode) -> (Arc<crate::Daemon>, tempfi
     let dir = tempfile::tempdir().unwrap();
     let mut opts = Options::new(dir.path().to_path_buf(), Some(name.into())).unwrap();
     opts.bind_ip = "127.0.0.1".parse().unwrap();
-    opts.listen_port = free_port();
+    opts.listen_port = 0;
     opts.wg_port = free_port();
     opts.relay = relay;
     if relay == RelayMode::Always {

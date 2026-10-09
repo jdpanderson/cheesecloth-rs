@@ -52,7 +52,7 @@ async fn start_in(name: &str, relay: RelayMode, dir: tempfile::TempDir) -> TestN
 fn options(name: &str, relay: RelayMode, dir: &tempfile::TempDir) -> Options {
     let mut opts = Options::new(dir.path().to_path_buf(), Some(name.into())).unwrap();
     opts.bind_ip = "127.0.0.1".parse().unwrap();
-    opts.listen_port = free_port();
+    opts.listen_port = 0;
     opts.wg_port = free_port();
     opts.relay = relay;
     // Give relays a public address (unreachable, like the host's own global

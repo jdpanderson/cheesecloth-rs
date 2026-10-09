@@ -36,7 +36,7 @@ impl Daemon {
             .args(["daemon", "--wireguard", "mock", "--no-port-mapping"])
             .args(["--bind", "127.0.0.1", "--relay", relay, "--name", name])
             .args(["--interface", &format!("mock-{name}"), "--log", "off"])
-            .args(["--listen-port", &free_port().to_string()])
+            .args(["--listen-port", "0"])
             .args(["--wg-port", &free_port().to_string()])
             .args(["--keepalive", "20"])
             .env_remove("CHEESECLOTH_SOCKET")
@@ -322,7 +322,7 @@ fn the_cli_reports_errors() {
         .arg(d.dir.path())
         .args(["daemon", "--wireguard", "mock", "--no-port-mapping"])
         .args(["--bind", "127.0.0.1", "--listen-port"])
-        .arg(free_port().to_string())
+        .arg("0")
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -359,7 +359,7 @@ fn logs_to_a_pipe_have_no_colors() {
         .arg(dir.path())
         .args(["daemon", "--wireguard", "mock", "--no-port-mapping"])
         .args(["--bind", "127.0.0.1", "--interface", "mock-logs"])
-        .args(["--listen-port", &free_port().to_string()])
+        .args(["--listen-port", "0"])
         .args(["--wg-port", &free_port().to_string()])
         .args(["--log", "cheesecloth_daemon=info"])
         .env_remove("CHEESECLOTH_SOCKET")

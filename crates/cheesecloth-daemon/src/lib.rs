@@ -82,9 +82,8 @@ pub struct Daemon {
 
 impl Daemon {
     /// Loads keys and any existing cluster state, and binds the control plane.
-    pub async fn start(opts: Options) -> Result<Arc<Daemon>> {
+    pub async fn start(mut opts: Options) -> Result<Arc<Daemon>> {
         opts.check().map_err(anyhow::Error::msg)?;
-        let opts = Arc::new(opts);
         let files = Files::new(&opts.state_dir)?;
         let identity = Arc::new(Identity::load_or_create(&files.identity())?);
         let wg_private = files.load_or_create_wg_key()?;
@@ -93,7 +92,11 @@ impl Daemon {
         // open and stops idle links between relays from dropping.
         let net_opts = NetOptions::new(SocketAddr::new(opts.bind_ip, opts.listen_port));
         let bound = Net::bind(net_opts, identity.clone())?;
-        info!(node = %identity.node_id(), control = %bound.local_addr()?, "cheesecloth daemon starting");
+        let control = bound.local_addr()?;
+        // Port 0 lets the system choose; peers need the port it chose.
+        opts.listen_port = control.port();
+        let opts = Arc::new(opts);
+        info!(node = %identity.node_id(), %control, "cheesecloth daemon starting");
         // The control plane calls back into the daemon, which owns it.
         let daemon = Arc::new_cyclic(|daemon| {
             let callbacks = Arc::new(Callbacks(daemon.clone()));
