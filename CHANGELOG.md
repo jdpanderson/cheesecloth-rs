@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-09
+
 ### Changed
 
 - Building needs Rust 1.95 or later, which GotaTun requires.
