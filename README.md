@@ -13,7 +13,7 @@ Byzantine proof.
 
 ## Quick start on Linux
 
-Use Rust and Cargo 1.91 or later, synchronized clocks, and either running
+Use Rust and Cargo 1.95 or later, synchronized clocks, and either running
 `systemd-resolved` or a `resolvconf` implementation for interface cleanup.
 The `resolvconf` from `systemd-resolvconf` calls `systemd-resolved`, so with it
 `systemd-resolved` must be running. If cleanup fails, the daemon will not start

@@ -8,6 +8,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Building needs Rust 1.95 or later, which GotaTun requires.
 - WireGuard no longer uses the defguard libraries. Kernel WireGuard on Linux
   is configured over netlink directly. Userspace WireGuard is
   [GotaTun](https://github.com/mullvad/gotatun) running inside the daemon on

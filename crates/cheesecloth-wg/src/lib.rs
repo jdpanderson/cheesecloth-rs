@@ -6,7 +6,8 @@
 //! members behind NAT punch a path (see *WireGuard and NAT traversal* in DESIGN.md).
 //! Userspace WireGuard runs inside this process, but on its own runtime.
 //!
-//! Everything that differs between operating systems is behind [`sys`].
+//! Everything that differs between operating systems is behind the private
+//! `sys` module.
 
 pub mod opener;
 pub mod plan;
