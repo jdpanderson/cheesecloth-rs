@@ -50,7 +50,6 @@ fn the_mock_records_configuration() {
         private_key: [1; 32],
         listen_port: 51820,
         addresses: vec!["100.64.0.1/24".parse().unwrap()],
-        routes: vec![],
         mtu: None,
     };
     let mut b = open(BackendKind::Mock, &config).unwrap();

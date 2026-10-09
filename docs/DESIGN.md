@@ -320,6 +320,10 @@ not need a keepalive, and this tests that while still sending a first handshake.
 `--keepalive` overrides these defaults. Punched paths always keep a keepalive:
 `--keepalive` if it is not 0, otherwise 25 seconds.
 
-The default backend tries kernel WireGuard, then userspace; macOS uses
-userspace directly. No per-peer ACLs are implemented: use host firewalls to
+The default backend tries kernel WireGuard, then userspace; macOS, Windows
+and FreeBSD use userspace directly. Kernel WireGuard is configured over
+netlink. Userspace WireGuard is GotaTun inside the daemon, on its own tokio
+runtime, with a TUN device (Wintun on Windows, which needs `wintun.dll` beside
+the executable). Each interface address's prefix routes the overlay into the
+interface on every OS. No per-peer ACLs are implemented: use host firewalls to
 restrict overlay access.

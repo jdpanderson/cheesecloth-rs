@@ -26,6 +26,10 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	cargo test --release --locked $(CARGO_JOBS) --workspace
 endif
 
+# debian/copyright names this file; keep it at that path.
+override_dh_compress:
+	dh_compress -X THIRD-PARTY-NOTICES.md
+
 override_dh_auto_install:
 	install -Dm755 debian/target/release/cheesecloth -t debian/cheesecloth/usr/bin
 	install -Dm644 packaging/cheesecloth.service -t debian/cheesecloth/usr/lib/systemd/system

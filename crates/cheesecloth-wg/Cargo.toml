@@ -12,27 +12,46 @@ readme.workspace = true
 publish.workspace = true
 
 [features]
-# Enables the privileged macOS integration test. Normal tests need no root.
+# Enable the privileged integration tests. Normal tests need no privileges.
 macos-integration = []
+linux-integration = []
 
 [[test]]
 name = "macos_userspace"
 required-features = ["macos-integration"]
 
+[[test]]
+name = "linux_tunnel"
+required-features = ["linux-integration"]
+
 [dependencies]
 anyhow.workspace = true
 cheesecloth-core.workspace = true
-defguard_wireguard_rs.workspace = true
+gotatun.workspace = true
 ipnet.workspace = true
+ipnetwork.workspace = true
+rand.workspace = true
 serde.workspace = true
 socket2.workspace = true
+tokio.workspace = true
 tracing.workspace = true
+tun-rs.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-defguard_boringtun.workspace = true
+[target.'cfg(target_os = "linux")'.dependencies]
+data-encoding.workspace = true
+futures-util.workspace = true
+nl-wireguard.workspace = true
+rtnetlink.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+] }
 
 [lints]
 workspace = true

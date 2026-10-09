@@ -1,5 +1,8 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: cheesecloth
+Comment: The binary also contains crates from crates.io, which the build
+ downloads. Their licenses, and where to get their source code, are in
+ /usr/share/doc/cheesecloth/THIRD-PARTY-NOTICES.md.
 
 Files: *
 Copyright: 2026 Jonathan Anderson

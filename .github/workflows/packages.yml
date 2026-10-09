@@ -94,6 +94,13 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
+      # The packages ship THIRD-PARTY-NOTICES.md; it must match Cargo.lock.
+      - name: Check the third-party notices
+        run: |
+          cargo install cargo-about --version 0.9.2 --locked --features cli
+          cargo about generate --fail about.hbs -o "$RUNNER_TEMP/notices.md"
+          diff -u THIRD-PARTY-NOTICES.md "$RUNNER_TEMP/notices.md" ||
+            { echo "::error::Run: cargo about generate --fail about.hbs -o THIRD-PARTY-NOTICES.md"; exit 1; }
 
   macos:
     name: macOS (${{ matrix.arch }})

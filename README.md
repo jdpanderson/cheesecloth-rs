@@ -177,11 +177,27 @@ cargo fmt --all -- --check
 tests/e2e/run.sh
 ```
 
+After a dependency change, regenerate `THIRD-PARTY-NOTICES.md` with
+`cargo about generate --fail about.hbs -o THIRD-PARTY-NOTICES.md`
+(`cargo install cargo-about --locked --features cli`); CI checks it.
+
 The end-to-end lab needs Podman, or Docker with `ENGINE=docker`, and Linux
 kernel WireGuard and container network privileges. It covers direct paths,
 NAT, port mapping, restart and removal. `FIREWALL=0` tests routers without
 inbound filtering; `SKIP_BUILD=1` reuses the image; `KEEP=1` keeps the lab for
 inspection.
+
+On Linux, test real kernel and userspace WireGuard in a new user and network
+namespace, without root:
+
+```sh
+cargo test --locked -p cheesecloth-wg --features linux-integration \
+  --test linux_tunnel \
+  --config 'target."cfg(target_os = \"linux\")".runner = ["unshare", "-rn"]'
+```
+
+This needs the WireGuard kernel module, `/dev/net/tun`, `ip` and
+unprivileged user namespaces.
 
 On a disposable Mac, run the privileged userspace test with:
 

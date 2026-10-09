@@ -626,8 +626,9 @@ impl WgState {
         {
             return false;
         }
-        let nets = node.overlay_nets();
-        let prefix4 = nets
+        // The address prefixes are the overlay ranges, so they route the overlay.
+        let prefix4 = node
+            .overlay_nets()
             .iter()
             .find_map(|n| match n {
                 IpNet::V4(v4) => Some(v4.prefix_len()),
@@ -643,7 +644,6 @@ impl WgState {
                 IpNet::new(IpAddr::V6(node_ipv6(&node.cluster_id, &node.me)), 64)
                     .expect("valid prefix"),
             ],
-            routes: nets,
             mtu: None,
         };
         match cheesecloth_wg::open(self.kind, &config) {

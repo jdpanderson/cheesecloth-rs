@@ -20,6 +20,11 @@ allow = [
     "MIT",
     "Unicode-3.0",
 ]
+# GotaTun (userspace WireGuard) is MPL-2.0, which applies file by file: the
+# binary stays MIT, as long as the packages say where GotaTun's source is.
+# THIRD-PARTY-NOTICES.md does that (see about.toml). Any other MPL crate needs
+# the same review first.
+exceptions = [{ crate = "gotatun", allow = ["MPL-2.0"] }]
 
 [bans]
 multiple-versions = "warn"

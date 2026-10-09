@@ -175,9 +175,6 @@ struct Flaky {
 }
 
 impl Backend for Flaky {
-    fn up(&mut self, config: &InterfaceConfig) -> Result<()> {
-        self.mock.lock().up(config)
-    }
     fn set_peer(&mut self, peer: &PeerConfig) -> Result<()> {
         if *self.fail_peer.lock() == Some(peer.key) {
             bail!("no buffer space available");

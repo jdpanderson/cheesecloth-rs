@@ -6,6 +6,28 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- WireGuard no longer uses the defguard libraries. Kernel WireGuard on Linux
+  is configured over netlink directly. Userspace WireGuard is
+  [GotaTun](https://github.com/mullvad/gotatun) running inside the daemon on
+  every OS, so no `wireguard-go`, `boringtun` or `wg` program is needed.
+- Userspace WireGuard changes a peer in place. It no longer removes and adds
+  the peer, which reset its session.
+- On FreeBSD the daemon uses userspace WireGuard; it no longer drives the
+  kernel's `if_wg`.
+- When an earlier run left a kernel WireGuard interface with the configured
+  name, the daemon replaces it in place of reusing it. It refuses to touch
+  an interface with that name that is not WireGuard.
+
+### Added
+
+- Windows userspace WireGuard, on a Wintun adapter. `wintun.dll` must be in
+  the same directory as the executable.
+- The packages include `THIRD-PARTY-NOTICES.md`: the licenses of the crates
+  built into the binary, and where to get their source code. GotaTun is under
+  MPL-2.0, and its older code under BoringTun's BSD-3-Clause license.
+
 ## [0.2.1] - 2026-10-08
 
 ### Fixed

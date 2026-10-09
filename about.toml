@@ -1,0 +1,33 @@
+# cargo-about: generates THIRD-PARTY-NOTICES.md, the licenses of the crates
+# built into the cheesecloth binary. Regenerate after dependency changes:
+#   cargo about generate --fail about.hbs -o THIRD-PARTY-NOTICES.md
+# CI checks that the committed file is current.
+
+# The licenses deny.toml allows, and MPL-2.0 for gotatun.
+accepted = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+]
+# Only what the binary contains.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# Our own crates are covered by LICENSE.
+private = { ignore = true }
+# cargo-about's built-in license details for crates with unusual license files.
+workarounds = ["ring", "rustls"]
+
+# GotaTun's code before March 5, 2026 is BoringTun's, under BSD-3-Clause. The
+# crate ships neither license file, so take the BSD notice from the commit the
+# crate was published from.
+[gotatun.clarify]
+license = "MPL-2.0 AND BSD-3-Clause"
+
+[[gotatun.clarify.git]]
+path = "LICENSE-CLOUDFLARE"
+license = "BSD-3-Clause"
+checksum = "6dbef24708bad8c727bd80cca58ba8aa1637cdcb2cc6e9a31ea49235717e9391"

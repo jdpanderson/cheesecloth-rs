@@ -7,6 +7,8 @@
 
 use std::{io, net::SocketAddr};
 
+use crate::sys::{Os, Platform};
+
 /// Sends one opener from `src_port` to `dst`. IPv4 only.
 pub fn send(src_port: u16, dst: SocketAddr) -> io::Result<()> {
     let SocketAddr::V4(dst) = dst else {
@@ -15,25 +17,7 @@ pub fn send(src_port: u16, dst: SocketAddr) -> io::Result<()> {
             "NAT openers are IPv4 only",
         ));
     };
-    #[cfg(unix)]
-    {
-        use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-        let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::UDP))?;
-        let packet = udp_packet(src_port, dst.port(), &[0]);
-        // For raw sockets the port in the destination address is ignored; the
-        // UDP header carries it.
-        let to = SockAddr::from(SocketAddr::new((*dst.ip()).into(), 0));
-        socket.send_to(&packet, &to)?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (src_port, dst);
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "NAT openers aren't supported on this platform",
-        ))
-    }
+    Os::send_raw_udp(*dst.ip(), &udp_packet(src_port, dst.port(), &[0]))
 }
 
 /// A UDP header plus payload. The checksum is left at 0, which IPv4 allows.

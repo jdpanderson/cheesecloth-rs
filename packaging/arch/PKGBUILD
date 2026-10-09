@@ -6,7 +6,8 @@ pkgver=0.0.0
 pkgrel=1
 pkgdesc='A lightweight, loose mesh: a peer-to-peer WireGuard cluster'
 arch=('x86_64' 'aarch64')
-license=('MIT')
+# Cheesecloth is MIT; the others are the bundled crates' (THIRD-PARTY-NOTICES.md).
+license=('MIT' 'Apache-2.0' 'BSD-2-Clause' 'BSD-3-Clause' 'ISC' 'MPL-2.0' 'Unicode-3.0')
 depends=('gcc-libs' 'glibc' 'resolvconf')
 makedepends=('cargo' 'git')
 optdepends=('wireguard-tools: inspect the interface with wg')
@@ -46,5 +47,5 @@ package() {
   install -Dm644 packaging/cheesecloth.default "$pkgdir/etc/default/cheesecloth"
   install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname"
   install -Dm644 docs/*.md -t "$pkgdir/usr/share/doc/$pkgname/docs"
-  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 LICENSE THIRD-PARTY-NOTICES.md -t "$pkgdir/usr/share/licenses/$pkgname"
 }

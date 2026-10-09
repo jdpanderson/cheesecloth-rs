@@ -4,9 +4,15 @@
 //! Cheesecloth never handles data-plane packets itself. It only configures
 //! WireGuard, and sends one-byte "NAT openers" from WireGuard's port when two
 //! members behind NAT punch a path (see *WireGuard and NAT traversal* in DESIGN.md).
+//! Userspace WireGuard runs inside this process, but on its own runtime.
+//!
+//! Everything that differs between operating systems is behind [`sys`].
 
 pub mod opener;
 pub mod plan;
+mod runtime;
+mod sys;
+mod userspace;
 
 use std::{
     collections::HashMap,
@@ -14,10 +20,13 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use cheesecloth_core::WgKey;
+use gotatun::x25519::{PublicKey, StaticSecret};
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
+
+use crate::sys::{Os, Platform};
 
 /// After a dead path is removed, wait this long before punching again, so NAT
 /// state left by WireGuard's retries expires. Just over the 30 s UDP timeout
@@ -31,19 +40,16 @@ pub const PUNCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// WireGuard rehandshakes every 2 minutes while packets flow and gives up
 /// after 90 s of failed attempts.
 pub const DEAD_AFTER: Duration = Duration::from_secs(200);
+/// WireGuard's usual MTU: a 1500-byte link less the largest (IPv6) overhead.
+const DEFAULT_MTU: u16 = 1420;
 
 pub fn generate_keypair() -> ([u8; 32], WgKey) {
-    let private = defguard_wireguard_rs::key::Key::generate();
-    let public = private.public_key();
-    (private.as_array(), WgKey(public.as_array()))
+    let private: [u8; 32] = rand::random();
+    (private, public_key(&private))
 }
 
 pub fn public_key(private: &[u8; 32]) -> WgKey {
-    WgKey(
-        defguard_wireguard_rs::key::Key::new(*private)
-            .public_key()
-            .as_array(),
-    )
+    WgKey(PublicKey::from(&StaticSecret::from(*private)).to_bytes())
 }
 
 #[derive(Clone, Debug)]
@@ -51,10 +57,15 @@ pub struct InterfaceConfig {
     pub name: String,
     pub private_key: [u8; 32],
     pub listen_port: u16,
+    /// Each address's prefix is routed into the interface, on every OS.
     pub addresses: Vec<IpNet>,
-    /// Routes to send into the interface (the overlay ranges).
-    pub routes: Vec<IpNet>,
-    pub mtu: Option<u32>,
+    pub mtu: Option<u16>,
+}
+
+impl InterfaceConfig {
+    fn mtu(&self) -> u16 {
+        self.mtu.unwrap_or(DEFAULT_MTU)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,10 +98,9 @@ impl PeerStatus {
     }
 }
 
-/// What the reconciler needs from a WireGuard implementation.
+/// What the reconciler needs from a WireGuard implementation. [`open`]
+/// creates the interface. Each call finishes before it returns.
 pub trait Backend: Send {
-    /// Creates and configures the interface (without peers).
-    fn up(&mut self, config: &InterfaceConfig) -> Result<()>;
     /// Adds or updates a peer.
     fn set_peer(&mut self, peer: &PeerConfig) -> Result<()>;
     fn remove_peer(&mut self, key: &WgKey) -> Result<()>;
@@ -128,262 +138,35 @@ impl std::str::FromStr for BackendKind {
 
 /// The default interface name for this OS.
 pub fn default_interface_name() -> &'static str {
-    if cfg!(target_os = "macos") {
-        // macOS only allows utun interfaces for userspace tunnels.
-        "utun77"
-    } else if cfg!(target_os = "freebsd") {
-        "wg77"
-    } else {
-        "cheesecloth0"
-    }
+    Os::DEFAULT_INTERFACE
 }
 
-/// Opens the WireGuard backend, creating the interface.
+/// Opens the WireGuard backend: creates the interface, configures it and
+/// brings it up.
 pub fn open(kind: BackendKind, config: &InterfaceConfig) -> Result<Box<dyn Backend>> {
-    let mut backend: Box<dyn Backend> = match kind {
-        BackendKind::Mock => Box::new(mock::Mock::default()),
-        BackendKind::Kernel => Box::new(defguard::Defguard::kernel(&config.name)?),
-        BackendKind::Userspace => Box::new(defguard::Defguard::userspace(&config.name)?),
-        BackendKind::Auto => {
-            if cfg!(target_os = "macos") {
-                Box::new(defguard::Defguard::userspace(&config.name)?)
-            } else {
-                match defguard::Defguard::kernel(&config.name)
-                    .and_then(|mut b| b.up(config).map(|_| b))
-                {
-                    Ok(b) => return Ok(Box::new(b)),
-                    Err(e) => {
-                        tracing::warn!("kernel WireGuard unavailable ({e:#}); using userspace");
-                        Box::new(defguard::Defguard::userspace(&config.name)?)
-                    }
-                }
+    Ok(match kind {
+        BackendKind::Mock => Box::new(mock::Mock::open(config)),
+        BackendKind::Kernel => Os::open_kernel(config)?,
+        BackendKind::Userspace => Box::new(userspace::Userspace::open(config)?),
+        BackendKind::Auto if !Os::KERNEL_WIREGUARD => Box::new(userspace::Userspace::open(config)?),
+        BackendKind::Auto => match Os::open_kernel(config) {
+            Ok(backend) => backend,
+            Err(e) => {
+                tracing::warn!("kernel WireGuard unavailable ({e:#}); using userspace");
+                Box::new(userspace::Userspace::open(config)?)
             }
-        }
-    };
-    backend.up(config)?;
-    Ok(backend)
+        },
+    })
 }
 
 /// Retries removal after a daemon restart without creating an interface.
 /// Cleanup records name the actual backend, never the automatic selector.
 pub fn remove_existing(kind: BackendKind, name: &str) -> Result<()> {
-    if kind == BackendKind::Mock {
-        return Ok(());
-    }
-    let mut backend = match kind {
-        BackendKind::Kernel => defguard::Defguard::kernel(name)?,
-        BackendKind::Userspace => defguard::Defguard::userspace(name)?,
-        _ => anyhow::bail!("cleanup requires the actual WireGuard backend"),
-    };
-    backend.remove()
-}
-
-mod defguard {
-    use super::*;
-    #[cfg(not(target_os = "macos"))]
-    use defguard_wireguard_rs::Kernel;
-    #[cfg(not(windows))]
-    use defguard_wireguard_rs::Userspace;
-    use defguard_wireguard_rs::{
-        InterfaceConfiguration, WGApi, WireguardInterfaceApi, key::Key, net::IpAddrMask, peer::Peer,
-    };
-
-    pub struct Defguard {
-        api: Box<dyn WireguardInterfaceApi + Send>,
-        kind: &'static str,
-        up: bool,
-        name: String,
-        // BoringTun panics when a set changes an existing peer, and the panic
-        // stops the whole device. For userspace, these are the keys that may
-        // be installed, so set_peer removes them first. None for the kernel,
-        // which changes peers in place.
-        installed: Option<std::collections::HashSet<WgKey>>,
-    }
-
-    fn mask(net: &IpNet) -> IpAddrMask {
-        IpAddrMask::new(net.addr(), net.prefix_len())
-    }
-
-    impl Defguard {
-        pub fn kernel(name: &str) -> Result<Self> {
-            #[cfg(target_os = "macos")]
-            {
-                let _ = name;
-                anyhow::bail!("macOS has no kernel WireGuard");
-            }
-            #[cfg(not(target_os = "macos"))]
-            Ok(Self {
-                api: Box::new(WGApi::<Kernel>::new(name)?),
-                kind: "kernel",
-                up: false,
-                name: name.into(),
-                installed: None,
-            })
-        }
-
-        pub fn userspace(name: &str) -> Result<Self> {
-            #[cfg(windows)]
-            {
-                let _ = name;
-                anyhow::bail!("Windows uses WireGuardNT only");
-            }
-            #[cfg(not(windows))]
-            Ok(Self {
-                api: Box::new(WGApi::<Userspace>::new(name)?),
-                kind: "userspace",
-                up: false,
-                name: name.into(),
-                installed: Some(Default::default()),
-            })
-        }
-
-        pub(super) fn remove(&mut self) -> Result<()> {
-            // A previous removal may have succeeded before the process could
-            // record completion. Only confirmed absence makes retries succeed.
-            #[cfg(unix)]
-            if !interface_exists(&self.name)? {
-                self.up = false;
-                return Ok(());
-            }
-            if let Err(e) = self.delete() {
-                tracing::error!(
-                    "deleting the WireGuard interface {} failed; it may need to be deleted by hand: {e:#}",
-                    self.name
-                );
-                return Err(e);
-            }
-            self.up = false;
-            Ok(())
-        }
-
-        fn delete(&mut self) -> Result<()> {
-            #[cfg(target_os = "macos")]
-            {
-                // Dropping the owner stops BoringTun and releases its utun.
-                // The library's remove_interface retains that owner and clears
-                // system-wide DNS settings, which Cheesecloth never configures.
-                self.api = Box::new(WGApi::<Userspace>::new(&self.name)?);
-                let deadline = std::time::Instant::now() + Duration::from_secs(5);
-                while interface_exists(&self.name)? {
-                    anyhow::ensure!(
-                        std::time::Instant::now() < deadline,
-                        "interface {} is still present",
-                        self.name
-                    );
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
-            #[cfg(not(target_os = "macos"))]
-            self.api.remove_interface()?;
-            #[cfg(unix)]
-            anyhow::ensure!(
-                !interface_exists(&self.name)?,
-                "interface {} is still present",
-                self.name
-            );
-            Ok(())
-        }
-    }
-
-    #[cfg(unix)]
-    #[allow(unsafe_code, reason = "the standard library has no if_nametoindex")]
-    fn interface_exists(name: &str) -> Result<bool> {
-        let name = std::ffi::CString::new(name)?;
-        // SAFETY: name is a live, NUL-terminated string; this call retains no pointer.
-        if unsafe { libc::if_nametoindex(name.as_ptr()) } != 0 {
-            return Ok(true);
-        }
-        let error = std::io::Error::last_os_error();
-        match error.raw_os_error() {
-            Some(libc::ENXIO | libc::ENODEV) => Ok(false),
-            _ => Err(error.into()),
-        }
-    }
-
-    impl Backend for Defguard {
-        fn up(&mut self, config: &InterfaceConfig) -> Result<()> {
-            self.api
-                .create_interface()
-                .context("creating the WireGuard interface")?;
-            // A new device starts with no peers.
-            if let Some(installed) = &mut self.installed {
-                installed.clear();
-            }
-            let iface = InterfaceConfiguration {
-                name: config.name.clone(),
-                prvkey: Key::new(config.private_key).to_lower_hex(),
-                addresses: config.addresses.iter().map(mask).collect(),
-                port: config.listen_port,
-                peers: Vec::new(),
-                mtu: config.mtu,
-                fwmark: None,
-            };
-            self.api
-                .configure_interface(&iface)
-                .context("configuring the WireGuard interface")?;
-            // On Linux the interface addresses' prefixes already route the
-            // overlay. Elsewhere, add the routes explicitly.
-            if !cfg!(target_os = "linux") && !config.routes.is_empty() {
-                let mut route_peer = Peer::new(Key::new([0; 32]));
-                route_peer.allowed_ips = config.routes.iter().map(mask).collect();
-                self.api
-                    .configure_peer_routing(&[route_peer])
-                    .context("adding overlay routes")?;
-            }
-            self.up = true;
-            Ok(())
-        }
-
-        fn set_peer(&mut self, peer: &PeerConfig) -> Result<()> {
-            let mut p = Peer::new(Key::new(peer.key.0));
-            p.endpoint = peer.endpoint;
-            p.persistent_keepalive_interval = Some(peer.keepalive);
-            p.allowed_ips = peer.allowed_ips.iter().map(mask).collect();
-            // The key stays listed even if the set below fails, because a
-            // failed set may still have added the peer.
-            if let Some(installed) = &mut self.installed
-                && !installed.insert(peer.key)
-            {
-                self.api.remove_peer(&p.public_key)?;
-            }
-            self.api.configure_peer(&p)?;
-            Ok(())
-        }
-
-        fn remove_peer(&mut self, key: &WgKey) -> Result<()> {
-            self.api.remove_peer(&Key::new(key.0))?;
-            if let Some(installed) = &mut self.installed {
-                installed.remove(key);
-            }
-            Ok(())
-        }
-
-        fn status(&self) -> Result<Vec<PeerStatus>> {
-            let host = self.api.read_interface_data()?;
-            Ok(host
-                .peers
-                .values()
-                .map(|p| PeerStatus {
-                    key: WgKey(p.public_key.as_array()),
-                    endpoint: p.endpoint,
-                    last_handshake: p.last_handshake,
-                    rx_bytes: p.rx_bytes,
-                    tx_bytes: p.tx_bytes,
-                    keepalive: p.persistent_keepalive_interval.unwrap_or(0),
-                })
-                .collect())
-        }
-
-        fn down(&mut self) -> Result<()> {
-            if self.up {
-                self.remove()?;
-            }
-            Ok(())
-        }
-
-        fn kind(&self) -> &'static str {
-            self.kind
-        }
+    match kind {
+        BackendKind::Mock => Ok(()),
+        BackendKind::Kernel => Os::remove_kernel(name),
+        BackendKind::Userspace => userspace::Userspace::remove_existing(name),
+        BackendKind::Auto => anyhow::bail!("cleanup requires the actual WireGuard backend"),
     }
 }
 
@@ -399,12 +182,16 @@ pub mod mock {
         pub peers: HashMap<WgKey, PeerConfig>,
     }
 
-    impl Backend for Mock {
-        fn up(&mut self, config: &InterfaceConfig) -> Result<()> {
-            self.config = Some(config.clone());
-            Ok(())
+    impl Mock {
+        pub fn open(config: &InterfaceConfig) -> Self {
+            Self {
+                config: Some(config.clone()),
+                peers: HashMap::new(),
+            }
         }
+    }
 
+    impl Backend for Mock {
         fn set_peer(&mut self, peer: &PeerConfig) -> Result<()> {
             self.peers.insert(peer.key, peer.clone());
             Ok(())

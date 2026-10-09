@@ -13,7 +13,7 @@ trap 'rm -rf "$stage"' EXIT
 
 install -d "$stage/root/usr/local/bin" "$stage/root/usr/local/share/doc/cheesecloth/docs"
 install -m755 target/release/cheesecloth "$stage/root/usr/local/bin/cheesecloth"
-install -m644 README.md LICENSE "$stage/root/usr/local/share/doc/cheesecloth/"
+install -m644 README.md LICENSE THIRD-PARTY-NOTICES.md "$stage/root/usr/local/share/doc/cheesecloth/"
 install -m644 docs/*.md "$stage/root/usr/local/share/doc/cheesecloth/docs/"
 xattr -cr "$stage/root"
 strip -x "$stage/root/usr/local/bin/cheesecloth"
