@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end test: real cheesecloth daemons with kernel WireGuard, behind
-# simulated NAT routers, in podman.
+# simulated NAT routers, in Podman or Docker.
 #
 #                         wan 10.99.0.0/24 ("the internet")
 #    ┌───────────────┬──────────────┬──────────────┬──────────────────┬──────────────────────┐
@@ -18,11 +18,17 @@
 # mappings. Routers masquerade out of the wan side with WAN_DELAY of
 # latency; with FIREWALL=1 (default) they also drop unsolicited inbound traffic.
 #
-# Env: FIREWALL=0, WAN_DELAY=20ms, SKIP_BUILD=1 (reuse the image), KEEP=1,
-#      LOG=<daemon log filter> (default info).
+# Env: ENGINE=docker (default podman), FIREWALL=0, WAN_DELAY=20ms,
+#      SKIP_BUILD=1 (reuse the image), KEEP=1, LOG=<daemon log filter>
+#      (default info).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
+ENGINE=${ENGINE:-podman}
+case $ENGINE in
+    podman | docker) ;;
+    *) echo "ENGINE must be podman or docker" >&2; exit 2 ;;
+esac
 IMAGE=localhost/cheesecloth-e2e
 P=cce2e
 WAN=10.99.0
@@ -32,16 +38,27 @@ WAN_DELAY=${WAN_DELAY:-20ms}
 NODES="r n1 n2 n3 n4 n5"
 
 lan() { case $1 in a) echo 10.99.1 ;; b) echo 10.99.2 ;; c) echo 10.99.3 ;; d) echo 10.99.4 ;; esac; }
+# net <network> <ip>: joins a network at a fixed address, in the engine's syntax.
+net() {
+    if [[ $ENGINE == docker ]]; then
+        echo "--network=name=$1,ip=$2"
+    else
+        echo "--network=$1:ip=$2"
+    fi
+}
 
 failures=0
 pass() { printf 'PASS  %s\n' "$1"; [[ -n ${2:-} ]] && printf '      %s\n' "$2"; return 0; }
 fail() { printf 'FAIL  %s\n' "$1"; [[ -n ${2:-} ]] && printf '      %s\n' "$2"; failures=$((failures + 1)); }
-ex() { podman exec "$P-$1" sh -c "$2"; }
-cc() { local n=$1; shift; podman exec "$P-$n" cheesecloth "$@"; }
+ex() { $ENGINE exec "$P-$1" sh -c "$2"; }
+cc() { local n=$1; shift; $ENGINE exec "$P-$n" cheesecloth "$@"; }
 
 remove_lab() {
-    podman rm -f -t 0 $(podman ps -aq --filter "name=^$P-") >/dev/null 2>&1 || true
-    podman network rm $P-wan $P-lan-a $P-lan-b $P-lan-c $P-lan-d >/dev/null 2>&1 || true
+    # Docker's forced removal kills at once; Podman's waits unless told not to.
+    local now=()
+    [[ $ENGINE == podman ]] && now=(-t 0)
+    $ENGINE rm -f "${now[@]}" $($ENGINE ps -aq --filter "name=^$P-") >/dev/null 2>&1 || true
+    $ENGINE network rm $P-wan $P-lan-a $P-lan-b $P-lan-c $P-lan-d >/dev/null 2>&1 || true
 }
 cleanup() {
     [[ ${KEEP:-0} == 1 ]] && { echo "KEEP=1: leaving lab running"; return; }
@@ -53,7 +70,7 @@ dump_logs() {
     local n
     for n in $NODES; do
         echo "----- $n"
-        podman logs --tail 40 "$P-$n" 2>&1 | sed 's/^/      /'
+        $ENGINE logs --tail 40 "$P-$n" 2>&1 | sed 's/^/      /'
     done
 }
 
@@ -62,43 +79,51 @@ dump_logs() {
 remove_lab
 if [[ ${SKIP_BUILD:-0} != 1 ]]; then
     echo "building $IMAGE (release build, a few minutes the first time)"
-    podman build -q -f tests/e2e/Containerfile -t $IMAGE . >/dev/null
+    $ENGINE build -q -f tests/e2e/Containerfile -t $IMAGE . >/dev/null
 fi
-podman network create --internal --subnet $WAN.0/24 $P-wan >/dev/null
+$ENGINE network create --internal --subnet $WAN.0/24 $P-wan >/dev/null
 for l in a b c d; do
-    podman network create --internal --subnet $(lan $l).0/24 $P-lan-$l >/dev/null
+    $ENGINE network create --internal --subnet $(lan $l).0/24 $P-lan-$l >/dev/null
 done
+
+# iface <name> <subnet>: the container's interface on that subnet. Docker
+# does not number interfaces in the order of the --network flags.
+iface() { ex $1 "ip -o -4 addr show to $2" | awk '{print $2}'; }
 
 # router <name> <lan> <wan-ip> <masquerade flags>
 router() {
-    podman run -d --name $P-$1 --cap-add NET_ADMIN \
+    $ENGINE run -d --name $P-$1 --cap-add NET_ADMIN \
         --sysctl net.ipv4.ip_forward=1 \
         --sysctl net.netfilter.nf_conntrack_udp_timeout=$NAT_TIMEOUT \
         --sysctl net.netfilter.nf_conntrack_udp_timeout_stream=$NAT_TIMEOUT \
-        --network $P-wan:ip=$3 --network $P-lan-$2:ip=$(lan $2).2 \
+        $(net $P-wan $3) $(net $P-lan-$2 $(lan $2).2) \
         $IMAGE >/dev/null
-    local fw=""
+    local wan fw=""
+    wan=$(iface $1 $WAN.0/24)
     if [[ $FIREWALL == 1 ]]; then
-        fw='
+        fw="
         table ip filter {
             chain input { type filter hook input priority filter; policy accept;
-                iifname "eth0" ct state established,related accept; iifname "eth0" drop; }
+                iifname \"$wan\" ct state established,related accept; iifname \"$wan\" drop; }
             chain forward { type filter hook forward priority filter; policy accept;
-                iifname "eth0" ct state established,related accept;
-                iifname "eth0" ct status dnat accept; iifname "eth0" drop; }
-        }'
+                iifname \"$wan\" ct state established,related accept;
+                iifname \"$wan\" ct status dnat accept; iifname \"$wan\" drop; }
+        }"
     fi
     ex $1 "nft -f - <<EOF
 table ip nat {
-    chain post { type nat hook postrouting priority srcnat; oifname \"eth0\" masquerade $4; }
+    chain post { type nat hook postrouting priority srcnat; oifname \"$wan\" masquerade $4; }
 }
 $fw
 EOF
-    tc qdisc add dev eth0 root netem delay $WAN_DELAY"
+    tc qdisc add dev $wan root netem delay $WAN_DELAY"
 }
 
 # upnp <router> <lan>: run miniupnpd (UPnP IGD, NAT-PMP and PCP) on a router.
 upnp() {
+    local wan lan_if
+    wan=$(iface $1 $WAN.0/24)
+    lan_if=$(iface $1 $(lan $2).0/24)
     ex $1 "nft -f - <<EOF
 table inet filter {
     chain forward { type filter hook forward priority 0; policy accept; jump miniupnpd; }
@@ -110,8 +135,8 @@ table inet filter {
 }
 EOF
     cat > /etc/miniupnpd/lab.conf <<EOF
-ext_ifname=eth0
-listening_ip=eth1
+ext_ifname=$wan
+listening_ip=$lan_if
 ext_allow_private_ipv4=yes
 enable_upnp=yes
 enable_pcp_pmp=yes
@@ -121,31 +146,31 @@ uuid=6f9d3a52-5a0b-4c61-9d1b-2f0e8c7a4b10
 allow 1024-65535 $(lan $2).0/24 1024-65535
 deny 0-65535 0.0.0.0/0 0-65535
 EOF"
-    podman exec -d $P-$1 miniupnpd -f /etc/miniupnpd/lab.conf -d
+    $ENGINE exec -d $P-$1 miniupnpd -f /etc/miniupnpd/lab.conf -d
 }
 
-# daemon <name> <podman args...> -- <daemon args...>
+# daemon <name> <engine args...> -- <daemon args...>
 daemon() {
     local name=$1; shift
     local net=()
     while [[ $1 != -- ]]; do net+=("$1"); shift; done
     shift
-    podman run -d --name $P-$name --hostname $name --cap-add NET_ADMIN --cap-add NET_RAW \
+    $ENGINE run -d --name $P-$name --hostname $name --cap-add NET_ADMIN --cap-add NET_RAW \
         --sysctl net.ipv6.conf.all.disable_ipv6=0 \
         "${net[@]}" $IMAGE cheesecloth daemon --log "${LOG:-info}" "$@" >/dev/null
 }
 
-daemon r --network $P-wan:ip=$WAN.10 --sysctl net.ipv4.ip_forward=0 -- --advertise $WAN.10
+daemon r $(net $P-wan $WAN.10) --sysctl net.ipv4.ip_forward=0 -- --advertise $WAN.10
 router ra a $WAN.11 ""
 router rb b $WAN.12 ""
 router rc c $WAN.13 "fully-random"
 router rd d $WAN.14 "fully-random"
 upnp rd d
-daemon n1 --network $P-lan-a:ip=$(lan a).10 --
-daemon n4 --network $P-lan-a:ip=$(lan a).11 --
-daemon n2 --network $P-lan-b:ip=$(lan b).10 --
-daemon n3 --network $P-lan-c:ip=$(lan c).10 --
-daemon n5 --network $P-lan-d:ip=$(lan d).10 --
+daemon n1 $(net $P-lan-a $(lan a).10) --
+daemon n4 $(net $P-lan-a $(lan a).11) --
+daemon n2 $(net $P-lan-b $(lan b).10) --
+daemon n3 $(net $P-lan-c $(lan c).10) --
+daemon n5 $(net $P-lan-d $(lan d).10) --
 for n in n1 n4; do ex $n "ip route add default via $(lan a).2"; done
 ex n2 "ip route add default via $(lan b).2"
 ex n3 "ip route add default via $(lan c).2"
@@ -243,10 +268,15 @@ fi
 
 # Port mapping: n5's router maps its WireGuard and control ports, so n5 is
 # reachable despite its fully-random NAT, and its dial-back makes it a relay.
-mappings() { json n5 status | tr -d '\n' | sed -n 's/.*"port_mappings": *\[\([^]]*\)\].*/\1/p'; }
-has_mappings() { [[ $(mappings) == *wireguard* && $(mappings) == *control* ]]; }
+# The granted mappings, as status shows them: "<port> <local> -> <external> (<method>)".
+mappings() { cc n5 status | sed -n 's/^portmap *\(.* -> .*\)/\1/p'; }
+has_mappings() {
+    local m
+    m=$(mappings)
+    grep -q '^wireguard ' <<<"$m" && grep -q '^control ' <<<"$m"
+}
 if wait_for 90 has_mappings; then
-    pass "n5's router grants port mappings" "$(cc n5 status | sed -n 's/^mapped *//p' | paste -sd ',' - | sed 's/,/, /g')"
+    pass "n5's router grants port mappings" "$(mappings | paste -sd ',' - | sed 's/,/, /g')"
 else
     fail "n5's router grants port mappings" "$(cc n5 status; ex rd 'nft list table inet filter')"
 fi
@@ -297,7 +327,7 @@ else
 fi
 
 # A restarted daemon comes back as a member and its paths recover.
-podman restart -t 5 $P-n1 >/dev/null
+$ENGINE restart -t 5 $P-n1 >/dev/null
 ex n1 "ip route add default via $(lan a).2"
 if wait_for 30 has_members n1 4 && wait_for 90 both_ping n1 n2; then
     pass "a restarted node rejoins with its state and re-punches"
@@ -311,8 +341,8 @@ fi
 n5_rules() { ex rd "nft list table inet filter" | grep -c "$(lan d)\.10" || true; }
 rules_before=$(n5_rules)
 cc n5 stop >/dev/null 2>&1 || true
-n5_exit=$(timeout 30 podman wait $P-n5 || echo timeout)
-if [[ $n5_exit == 0 ]] && podman logs $P-n5 2>&1 | grep -q "shutting down: stop requested"; then
+n5_exit=$(timeout 30 $ENGINE wait $P-n5 || echo timeout)
+if [[ $n5_exit == 0 ]] && $ENGINE logs $P-n5 2>&1 | grep -q "shutting down: stop requested"; then
     pass "stop ends the daemon cleanly"
 else
     fail "stop ends the daemon cleanly" "exit status: $n5_exit"

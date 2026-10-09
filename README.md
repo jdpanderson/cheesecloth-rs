@@ -177,10 +177,11 @@ cargo fmt --all -- --check
 tests/e2e/run.sh
 ```
 
-The end-to-end lab needs Podman with Linux kernel WireGuard and container
-network privileges. It covers direct paths, NAT, port mapping, restart and
-removal. `FIREWALL=0` tests routers without inbound filtering; `SKIP_BUILD=1`
-reuses the image; `KEEP=1` keeps the lab for inspection.
+The end-to-end lab needs Podman, or Docker with `ENGINE=docker`, and Linux
+kernel WireGuard and container network privileges. It covers direct paths,
+NAT, port mapping, restart and removal. `FIREWALL=0` tests routers without
+inbound filtering; `SKIP_BUILD=1` reuses the image; `KEEP=1` keeps the lab for
+inspection.
 
 On a disposable Mac, run the privileged userspace test with:
 
