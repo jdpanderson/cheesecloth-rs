@@ -6,6 +6,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A node could fail to learn an agreed state with "this node's acceptor
+  ignored the agreed state". This happened when an earlier attempt to learn
+  the same state was stopped after it was saved, for example by a timeout
+  during a slow disk sync. The node now takes in the saved state.
+
 ## [0.2.0] - 2026-10-08
 
 ### Changed

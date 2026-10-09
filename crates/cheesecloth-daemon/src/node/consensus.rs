@@ -645,13 +645,18 @@ impl Node {
             let mut acceptor = self.acceptor.clone().lock_owned().await;
             let (saved, proof) = (chosen.clone(), cert.clone());
             // Saving syncs the disk: not on a worker thread.
-            let learned = self.lifetime.blocking(move || acceptor.learn(saved, proof))
+            let on_disk = self.lifetime.blocking(move || {
+                    let learned = acceptor.learn(saved.clone(), proof)?;
+                    // An earlier `learn` of this value that was dropped after
+                    // its save left it in the acceptor but not in `state`.
+                    Ok::<_, std::io::Error>(learned || acceptor.acceptor().learned() == Some(&saved))
+                })
                 .await?
                 .context("saving the agreed state")?;
-            // The version is newer than the one learned, so the acceptor
-            // ignores the value only if it goes back to an older
+            // Otherwise, the version is newer than the one learned, so the
+            // acceptor ignores the value only if it goes back to an older
             // configuration. Then it saved nothing.
-            if !learned {
+            if !on_disk {
                 bail!("this node's acceptor ignored the agreed state");
             }
             let previous = current.value.active_config();

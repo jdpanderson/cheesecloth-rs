@@ -1144,6 +1144,22 @@ async fn a_node_that_learned_its_removal_has_left_even_if_a_step_failed() {
     assert_eq!(n.leave(false).await.unwrap(), Vec::<String>::new());
 }
 
+#[tokio::test]
+async fn a_state_saved_by_a_dropped_learn_is_taken_in_when_learned_again() {
+    let h = harness(RelayMode::Never, &[false]).await;
+    let n = &h.node;
+    let mut next = (*n.agreed()).clone();
+    next.value.version += 1;
+    // A `learn` that was dropped after its save: the acceptor holds `next`,
+    // but the node doesn't have it as its agreed state.
+    let p = h.proven(next.clone());
+    let saved = n.acceptor.lock().await.learn(next.clone(), p.cert).unwrap();
+    assert!(saved);
+    assert_ne!(*n.agreed(), next);
+    h.learn(next.clone()).await.unwrap();
+    assert_eq!(*n.agreed(), next);
+}
+
 /// The harness node's agreed value, with this node and all four peers as
 /// acceptors. The `acceptors` setting is 3, and no peer is present.
 fn five_acceptors(h: &crate::testing::Harness) -> super::Agreed {
