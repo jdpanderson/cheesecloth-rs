@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["spikes"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Jonathan Anderson <janderson@janderson.ca>"]
 edition = "2024"
 # The oldest Rust that builds the dependencies; CI checks it.
