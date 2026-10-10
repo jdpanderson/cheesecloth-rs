@@ -64,6 +64,18 @@ mod unix {
         write_private(&path, b"x").unwrap();
         assert_eq!(mode(&path), 0o600);
     }
+
+    #[test]
+    fn a_stale_tmp_file_does_not_keep_its_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secret.key");
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, b"stale").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&path, b"x").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"x");
+        assert_eq!(mode(&path), 0o600);
+    }
 }
 
 #[cfg(windows)]

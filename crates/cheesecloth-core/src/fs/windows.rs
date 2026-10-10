@@ -61,15 +61,11 @@ pub(super) fn create_private_dir(dir: &Path) -> io::Result<()> {
     security.apply(&path)
 }
 
-/// Creates a new file with the private access list. A file left by an
-/// earlier attempt is removed first, because Windows ignores the access list
-/// when it opens an existing file.
+/// Creates a new file with the private access list. Fails if the file
+/// exists, because Windows ignores the access list when it opens an existing
+/// file.
 #[allow(unsafe_code, reason = "windows-sys has no safe file creation")]
 pub(super) fn create_private_file(path: &Path) -> io::Result<File> {
-    match std::fs::remove_file(path) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
-        _ => {}
-    }
     let security = SecurityDescriptor::private(false)?;
     let attributes = security.attributes();
     let path = wide(path.as_os_str());
