@@ -1,12 +1,13 @@
 //! The local API between the `cheesecloth` CLI and the daemon: one JSON request
-//! per line on a Unix domain socket, answered by one JSON response line.
+//! per line on a Unix domain socket, or a named pipe on Windows, answered by
+//! one JSON response line.
 
 use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::Path,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use cheesecloth_core::{NodeId, WgKey};
 use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -167,7 +168,7 @@ pub struct ConfigView {
 
 /// Sends one request to the daemon and returns its typed answer.
 pub async fn call<T: DeserializeOwned>(socket: &Path, req: &ApiRequest) -> Result<T> {
-    let stream = connect(socket).await?;
+    let stream = crate::ipc::connect(socket).await?;
     let (read, mut write) = tokio::io::split(stream);
     let mut line = serde_json::to_string(req)?;
     line.push('\n');
@@ -183,26 +184,6 @@ pub async fn call<T: DeserializeOwned>(socket: &Path, req: &ApiRequest) -> Resul
         ApiResponse::Ok(v) => Ok(serde_json::from_value(v)?),
         ApiResponse::Err(e) => Err(anyhow!(e)),
     }
-}
-
-#[cfg(unix)]
-async fn connect(socket: &Path) -> Result<tokio::net::UnixStream> {
-    tokio::net::UnixStream::connect(socket)
-        .await
-        .with_context(|| {
-            format!(
-                "can't reach the cheesecloth daemon at {} (is it running, and do you have \
-             permission?)",
-                socket.display()
-            )
-        })
-}
-
-#[cfg(not(unix))]
-async fn connect(_socket: &Path) -> Result<tokio::io::DuplexStream> {
-    Err(anyhow!(
-        "the local API needs Unix domain sockets on this platform"
-    ))
 }
 
 /// The answer to `init`.

@@ -5,13 +5,15 @@
 //! - `membership`: init, join, leave.
 //! - `commands`: invites, removal, approvals, settings.
 //! - `views`: status and peers.
-//! - `local_api`: the Unix-socket server for the CLI.
+//! - `local_api`: the local API server for the CLI.
+//! - `ipc`: its transport, a Unix socket or a named pipe on Windows.
 //! - `node`: a running cluster member and its loops.
 
 pub mod api;
 mod clock;
 mod commands;
 mod files;
+mod ipc;
 mod lifetime;
 mod local;
 mod local_api;

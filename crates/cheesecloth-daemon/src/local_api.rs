@@ -1,16 +1,16 @@
-//! The local API: one JSON request per line on a Unix socket (see `api`).
+//! The local API: one JSON request per line on the local IPC channel (see
+//! `api` and `ipc`).
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
-#[cfg(unix)]
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use anyhow::{Result, bail};
+use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::info;
 
 use crate::{
     Daemon, Phase,
     api::{ApiRequest, ApiResponse},
+    ipc,
 };
 
 fn to_json<T: serde::Serialize>(value: T) -> Result<serde_json::Value> {
@@ -89,15 +89,14 @@ impl Daemon {
     }
 
     /// Serves the local API until the process exits.
-    #[cfg(unix)]
     pub async fn serve_api(self: Arc<Self>) -> Result<()> {
         self.api_work
             .run(async {
-                let path = self.opts.socket_path();
-                let listener = bind_private_socket(&path)?;
-                info!(socket = %path.display(), "local API ready");
+                let addr = self.opts.socket_path()?;
+                let mut listener = ipc::Listener::bind(&addr)?;
+                info!(socket = %addr.display(), "local API ready");
                 loop {
-                    let (stream, _) = listener.accept().await?;
+                    let stream = listener.accept().await?;
                     let daemon = self.clone();
                     self.api_work.spawn(async move {
                         let (read, mut write) = tokio::io::split(stream);
@@ -121,67 +120,21 @@ impl Daemon {
             .await
             .unwrap_or(Ok(()))
     }
-
-    #[cfg(not(unix))]
-    pub async fn serve_api(self: Arc<Self>) -> Result<()> {
-        bail!("the local API isn't implemented on this platform yet")
-    }
 }
 
-/// Binds the local API socket at `path`, readable and writable by its owner
-/// only from the start. The socket is created in a private (0700) directory,
-/// restricted to 0600, then moved into place, so nobody can connect while its
-/// permissions are looser. Refuses to replace the socket of a running daemon.
-#[cfg(unix)]
-fn bind_private_socket(path: &std::path::Path) -> Result<tokio::net::UnixListener> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-    if std::os::unix::net::UnixStream::connect(path).is_ok() {
-        bail!(
-            "another cheesecloth daemon is already listening on {}",
-            path.display()
-        );
-    }
-    let parent = path.parent().context("socket path has no directory")?;
-    let staging = parent.join(format!(".cheesecloth-socket-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&staging)
-        .with_context(|| format!("creating {}", staging.display()))?;
-    let result = (|| {
-        let tmp = staging.join("control.sock");
-        let listener = tokio::net::UnixListener::bind(&tmp)
-            .with_context(|| format!("binding {}", tmp.display()))?;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-        std::fs::rename(&tmp, path)
-            .with_context(|| format!("moving the socket to {}", path.display()))?;
-        Ok(listener)
-    })();
-    let _ = std::fs::remove_dir_all(&staging);
-    result
-}
-
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn shutdown_closes_idle_api_clients_and_releases_the_daemon() {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
         let (d, _dir) = crate::testing::daemon("api-stop", crate::RelayMode::Never).await;
         let weak = Arc::downgrade(&d);
-        let socket = d.opts.socket_path();
+        let socket = d.opts.socket_path().unwrap();
         let server = tokio::spawn(d.clone().serve_api());
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while !socket.exists() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        let client = tokio::net::UnixStream::connect(&socket).await.unwrap();
-        let (read, mut write) = client.into_split();
-        let mut lines = tokio::io::BufReader::new(read).lines();
+        let client = api_client(&socket).await;
+        let (read, mut write) = tokio::io::split(client);
+        let mut lines = BufReader::new(read).lines();
         write.write_all(b"\"status\"\n").await.unwrap();
         assert!(lines.next_line().await.unwrap().is_some());
         d.shutdown().await;
@@ -193,9 +146,7 @@ mod tests {
 
     use std::time::Duration;
 
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-
-    use crate::testing::serve;
+    use crate::testing::{api_client, serve};
 
     /// Fails the test instead of hanging when `f` never finishes.
     async fn within<F: Future>(f: F) -> F::Output {
@@ -252,9 +203,9 @@ mod tests {
     async fn stop_follows_other_requests_on_one_connection() {
         let (d, _dir) = crate::testing::daemon("api-stop-after", crate::RelayMode::Never).await;
         let (server, socket) = serve(&d).await;
-        let client = tokio::net::UnixStream::connect(&socket).await.unwrap();
-        let (read, mut write) = client.into_split();
-        let mut lines = tokio::io::BufReader::new(read).lines();
+        let client = ipc::connect(&socket).await.unwrap();
+        let (read, mut write) = tokio::io::split(client);
+        let mut lines = BufReader::new(read).lines();
         write
             .write_all(b"{\"cmd\":\"status\"}\n{\"cmd\":\"stop\"}\n")
             .await
@@ -274,7 +225,7 @@ mod tests {
         let (d, _dir) = crate::testing::daemon("api-stop-gone", crate::RelayMode::Never).await;
         let (server, socket) = serve(&d).await;
         let op = d.op.lock().await;
-        let mut client = tokio::net::UnixStream::connect(&socket).await.unwrap();
+        let mut client = ipc::connect(&socket).await.unwrap();
         client.write_all(b"{\"cmd\":\"stop\"}\n").await.unwrap();
         queued(&d, 1).await;
         drop(client);

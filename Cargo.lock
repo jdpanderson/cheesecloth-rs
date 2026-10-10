@@ -285,6 +285,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -292,9 +293,11 @@ name = "cheesecloth-daemon"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "cheesecloth-core",
  "cheesecloth-net",
  "cheesecloth-wg",
+ "data-encoding",
  "futures-util",
  "hostname",
  "if-addrs",
@@ -311,6 +314,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
