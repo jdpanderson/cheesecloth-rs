@@ -23,6 +23,7 @@ mod options;
 mod portmap;
 mod proto;
 mod soft;
+mod stop;
 #[cfg(test)]
 mod testing;
 mod views;
@@ -266,7 +267,7 @@ impl cheesecloth_net::Handler for Callbacks {
 /// Runs the daemon until interrupted or asked to stop.
 pub async fn run(opts: Options) -> Result<()> {
     let daemon = Daemon::start(opts).await?;
-    serve(daemon, shutdown_signal()).await
+    serve(daemon, stop::requested()).await
 }
 
 /// Serves the local API until `signal` completes, a `stop` request arrives or
@@ -291,18 +292,4 @@ async fn serve(daemon: Arc<Daemon>, signal: impl Future<Output = ()>) -> Result<
     };
     daemon.shutdown().await;
     result
-}
-
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        let mut term = signal(SignalKind::terminate()).expect("signal handler");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = term.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
 }
