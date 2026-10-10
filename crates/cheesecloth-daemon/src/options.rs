@@ -36,7 +36,8 @@ impl std::str::FromStr for RelayMode {
 #[derive(Clone, Debug)]
 pub struct Options {
     pub state_dir: PathBuf,
-    /// Local API socket; defaults to `<state_dir>/control.sock`.
+    /// Local API address: a socket path, or a pipe name on Windows. See
+    /// `socket_path` for the default.
     pub socket: Option<PathBuf>,
     /// Address to bind the control plane to (`::` for all, dual-stack).
     pub bind_ip: IpAddr,
@@ -106,15 +107,19 @@ impl Options {
         Ok(())
     }
 
-    pub fn socket_path(&self) -> PathBuf {
+    pub fn socket_path(&self) -> io::Result<PathBuf> {
         socket_path(&self.state_dir, self.socket.as_deref())
     }
 }
 
-/// The local API socket: `socket` if given, else `<state_dir>/control.sock`.
-/// The CLI uses this too, to find the daemon.
-pub fn socket_path(state_dir: &Path, socket: Option<&Path>) -> PathBuf {
-    socket.map_or_else(|| state_dir.join("control.sock"), Path::to_path_buf)
+/// The local API address: `socket` if given, else `<state_dir>/control.sock`,
+/// or on Windows a pipe named after the state directory. The CLI uses this
+/// too, to find the daemon.
+pub fn socket_path(state_dir: &Path, socket: Option<&Path>) -> io::Result<PathBuf> {
+    match socket {
+        Some(socket) => Ok(socket.to_path_buf()),
+        None => crate::ipc::default_address(state_dir),
+    }
 }
 
 /// The host name, cut to the longest name a member may have.

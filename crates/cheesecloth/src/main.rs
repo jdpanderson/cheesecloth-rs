@@ -37,7 +37,9 @@ struct Cli {
     /// directories (and ports and interfaces) to be in several clusters.
     #[arg(long, global = true, env = "CHEESECLOTH_STATE_DIR", default_value_os_t = default_state_dir())]
     state_dir: PathBuf,
-    /// The daemon's local API socket (default: control.sock in the state directory).
+    /// The daemon's local API address: a socket path, or a pipe name
+    /// (\\.\pipe\...) on Windows. Default: control.sock in the state
+    /// directory, or a pipe named after it on Windows.
     #[arg(long, global = true, env = "CHEESECLOTH_SOCKET")]
     socket: Option<PathBuf>,
     /// Print raw JSON.
@@ -155,7 +157,6 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let socket = cheesecloth_daemon::socket_path(&cli.state_dir, cli.socket.as_deref());
     let json_out = cli.json;
     let config_key = match &cli.command {
         Cmd::Config {
@@ -224,6 +225,10 @@ async fn run(cli: Cli) -> Result<()> {
             ConfigCmd::Set { key, value } => ApiRequest::ConfigSet { key, value },
         },
     };
+    // After the daemon case: on Windows the default address needs an
+    // existing state directory, which the daemon creates.
+    let socket = cheesecloth_daemon::socket_path(&cli.state_dir, cli.socket.as_deref())
+        .context("finding the local API address")?;
     let value: Value = api::call(&socket, &req).await?;
     if json_out {
         println!("{}", serde_json::to_string_pretty(&value)?);

@@ -278,7 +278,6 @@ async fn failed_shutdown_cleanup_retains_membership_and_can_be_retried() {
     restarted.shutdown().await;
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn stop_reports_failed_shutdown_cleanup() {
     use std::sync::atomic::Ordering::SeqCst;

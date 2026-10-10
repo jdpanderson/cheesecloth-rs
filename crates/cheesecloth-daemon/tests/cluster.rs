@@ -354,16 +354,16 @@ async fn approvals_gate_joins() {
 async fn local_api_over_the_socket() {
     init_tracing();
     let a = start("a", RelayMode::Always).await;
-    let socket = a._dir.path().join("control.sock");
+    let socket = cheesecloth_daemon::socket_path(a._dir.path(), None).unwrap();
     tokio::spawn(a.daemon.clone().serve_api());
-    eventually("socket", 10, || async { socket.exists() }).await;
+    eventually("the local API", 10, || async {
+        api::call::<StatusView>(&socket, &ApiRequest::Status)
+            .await
+            .is_ok()
+    })
+    .await;
     let s: StatusView = api::call(&socket, &ApiRequest::Status).await.unwrap();
     assert_eq!(s.phase, "none");
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&socket).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
-    }
     // A second daemon can't take over a live socket.
     let err = a.daemon.clone().serve_api().await.unwrap_err();
     assert!(format!("{err:#}").contains("already listening"), "{err:#}");

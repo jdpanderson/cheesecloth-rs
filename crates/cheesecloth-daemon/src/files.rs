@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use cheesecloth_core::{ClusterId, token::TokenPeer, write_private};
+use cheesecloth_core::{ClusterId, fs::write_private, token::TokenPeer};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// A join waiting for approvals.

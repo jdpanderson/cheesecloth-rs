@@ -263,22 +263,30 @@ pub async fn daemon(name: &str, relay: RelayMode) -> (Arc<crate::Daemon>, tempfi
 }
 
 /// Runs `crate::serve` for `d` with a signal that never comes, so only a
-/// `stop` request ends it. Returns once the API socket exists.
-#[cfg(unix)]
+/// `stop` request ends it. Returns once the local API answers connections.
 pub async fn serve(
     d: &Arc<crate::Daemon>,
 ) -> (
     tokio::task::JoinHandle<anyhow::Result<()>>,
     std::path::PathBuf,
 ) {
-    let socket = d.opts.socket_path();
+    let socket = d.opts.socket_path().unwrap();
     let server = tokio::spawn(crate::serve(d.clone(), std::future::pending()));
+    api_client(&socket).await;
+    (server, socket)
+}
+
+/// Connects to the local API at `addr`, waiting up to 5 s for the daemon to
+/// serve it. (A pipe has no file to wait for.)
+pub async fn api_client(addr: &std::path::Path) -> crate::ipc::ClientStream {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while !socket.exists() {
-            tokio::task::yield_now().await;
+        loop {
+            if let Ok(client) = crate::ipc::connect(addr).await {
+                return client;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("the API socket");
-    (server, socket)
+    .expect("the local API")
 }

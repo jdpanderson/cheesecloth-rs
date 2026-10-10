@@ -2,12 +2,13 @@
 //! the cluster state machine that consensus agrees on.
 
 pub mod addr;
+pub mod fs;
 mod id;
 mod identity;
 pub mod state;
 pub mod token;
 
-use std::{io, path::Path, time::SystemTime};
+use std::time::SystemTime;
 
 pub use id::{ClusterId, NodeId, ProposalId, WgKey};
 pub use identity::{Domain, Identity, Signature, Signed, verify};
@@ -38,26 +39,4 @@ pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64)
-}
-
-/// Writes a file readable only by its owner.
-pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("tmp");
-    {
-        use std::io::Write;
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let mut f = opts.open(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-    }
-    std::fs::rename(&tmp, path)
 }

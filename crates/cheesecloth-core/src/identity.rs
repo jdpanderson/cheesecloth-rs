@@ -134,7 +134,7 @@ impl Identity {
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 let id = Self::generate();
-                crate::write_private(path, &id.secret())?;
+                crate::fs::write_private(path, &id.secret())?;
                 Ok(id)
             }
             Err(e) => Err(e),
