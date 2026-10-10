@@ -17,7 +17,7 @@ use tokio::net::windows::named_pipe::{
     ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
 };
 use windows_sys::Win32::{
-    Foundation::{ERROR_ACCESS_DENIED, ERROR_NO_DATA, ERROR_PIPE_BUSY, HANDLE},
+    Foundation::{ERROR_ACCESS_DENIED, ERROR_PIPE_BUSY, HANDLE},
     Security::{
         EqualSid, IsWellKnownSid, PSID, SID_AND_ATTRIBUTES, TOKEN_GROUPS, TOKEN_QUERY, TokenGroups,
         WinBuiltinAdministratorsSid,
@@ -32,7 +32,7 @@ use windows_sys::Win32::{
 pub(crate) type ServerStream = NamedPipeServer;
 pub(crate) type ClientStream = NamedPipeClient;
 
-/// Every pipe name starts with this.
+/// Every pipe name starts with this, in any letter case.
 const PIPE_PREFIX: &str = r"\\.\pipe\";
 
 pub(super) fn default_address(state_dir: &Path) -> io::Result<PathBuf> {
@@ -49,10 +49,13 @@ pub(super) fn pipe_name(canonical: &Path) -> PathBuf {
 
 /// Refuses an address that is not a pipe name.
 fn check_address(addr: &Path) -> Result<()> {
-    if !addr
-        .to_str()
-        .is_some_and(|name| name.len() > PIPE_PREFIX.len() && name.starts_with(PIPE_PREFIX))
-    {
+    let is_pipe = |name: &str| {
+        name.len() > PIPE_PREFIX.len()
+            && name
+                .get(..PIPE_PREFIX.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(PIPE_PREFIX))
+    };
+    if !addr.to_str().is_some_and(is_pipe) {
         bail!(
             "the local API address on Windows must be a pipe name that starts with {PIPE_PREFIX}, \
              not {}",
@@ -97,16 +100,7 @@ impl Listener {
 
     /// Waits for a client, then makes a new instance for the next one.
     pub(crate) async fn accept(&mut self) -> io::Result<ServerStream> {
-        loop {
-            match self.next.connect().await {
-                Ok(()) => break,
-                // The client closed its end before the server saw it connect.
-                Err(e) if e.raw_os_error() == Some(ERROR_NO_DATA as i32) => {
-                    self.next = create(&self.name, &self.security, false)?;
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        self.next.connect().await?;
         let next = create(&self.name, &self.security, false)?;
         Ok(std::mem::replace(&mut self.next, next))
     }

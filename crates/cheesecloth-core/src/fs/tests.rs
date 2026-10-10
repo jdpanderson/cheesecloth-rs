@@ -79,77 +79,96 @@ mod windows {
                 ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
                 SDDL_REVISION_1, SE_FILE_OBJECT,
             },
-            DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+            DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
         },
     };
 
     use super::*;
-    use crate::fs::windows::{SecurityDescriptor, wide};
+    use crate::fs::windows::{SecurityDescriptor, take_local_string, wide};
 
-    /// Whether the DACL of `sd` is protected, and its entries.
-    fn dacl(sd: PSECURITY_DESCRIPTOR) -> (bool, BTreeSet<String>) {
-        let mut s = ptr::null_mut();
-        // SAFETY: sd is a valid descriptor and s is a valid place to write.
-        let ok = unsafe {
-            ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                sd,
-                SDDL_REVISION_1,
-                DACL_SECURITY_INFORMATION,
-                &mut s,
-                ptr::null_mut(),
-            )
-        };
-        assert_ne!(ok, 0, "{}", io::Error::last_os_error());
-        // SAFETY: the call wrote a NUL-terminated UTF-16 string to s.
-        let len = (0..).take_while(|&i| unsafe { *s.add(i) } != 0).count();
-        // SAFETY: s is valid for len characters.
-        let sddl = String::from_utf16(unsafe { std::slice::from_raw_parts(s, len) }).unwrap();
-        // SAFETY: the call allocated s with LocalAlloc.
-        unsafe { LocalFree(s.cast()) };
-        let rest = sddl.strip_prefix("D:").expect(&sddl);
-        let protected = rest.starts_with('P');
-        let aces = rest
-            .split('(')
-            .skip(1)
-            .map(|ace| format!("({ace}"))
-            .collect();
-        (protected, aces)
+    /// The owner and the DACL of a descriptor, as SDDL strings.
+    #[derive(Debug, PartialEq)]
+    struct Security {
+        owner: String,
+        protected: bool,
+        aces: BTreeSet<String>,
     }
 
-    /// The DACL of the file or directory at `path`.
-    fn dacl_of(path: &Path) -> (bool, BTreeSet<String>) {
-        let mut sd = ptr::null_mut();
-        // SAFETY: the path is NUL-terminated and sd is a valid place to
-        // write; the other outputs are optional.
-        let status = unsafe {
-            GetNamedSecurityInfoW(
-                wide(path.as_os_str()).as_ptr(),
-                SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                &mut sd,
-            )
-        };
-        assert_eq!(status, 0, "{}", io::Error::from_raw_os_error(status as i32));
-        let result = dacl(sd);
-        // SAFETY: GetNamedSecurityInfoW allocated sd with LocalAlloc.
-        unsafe { LocalFree(sd) };
-        result
-    }
+    impl Security {
+        fn of(sd: PSECURITY_DESCRIPTOR) -> Self {
+            let mut s = ptr::null_mut();
+            // SAFETY: sd is a valid descriptor and s is a valid place to write.
+            let ok = unsafe {
+                ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                    sd,
+                    SDDL_REVISION_1,
+                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                    &mut s,
+                    ptr::null_mut(),
+                )
+            };
+            assert_ne!(ok, 0, "{}", io::Error::last_os_error());
+            // SAFETY: the call allocated s with LocalAlloc, and only this
+            // code uses it.
+            let sddl = unsafe { take_local_string(s) }.unwrap();
+            let (owner, dacl) = sddl
+                .strip_prefix("O:")
+                .and_then(|rest| rest.split_once("D:"))
+                .expect(&sddl);
+            Self {
+                owner: owner.to_owned(),
+                protected: dacl.starts_with('P'),
+                aces: dacl
+                    .split('(')
+                    .skip(1)
+                    .map(|ace| format!("({ace}"))
+                    .collect(),
+            }
+        }
 
-    /// The private entries: full access for SYSTEM, Administrators and this
-    /// user, with `flags` (such as "OICI").
-    fn private_aces(flags: &str) -> BTreeSet<String> {
-        let (_, aces) = dacl(SecurityDescriptor::private(false).unwrap().as_ptr());
-        assert_eq!(aces.len(), 3, "{aces:?}");
-        assert!(aces.contains("(A;;FA;;;SY)"), "{aces:?}");
-        assert!(aces.contains("(A;;FA;;;BA)"), "{aces:?}");
-        aces.iter()
-            .map(|ace| ace.replacen("(A;;", &format!("(A;{flags};"), 1))
-            .collect()
+        /// The owner and DACL of the file or directory at `path`.
+        fn of_path(path: &Path) -> Self {
+            let mut sd = ptr::null_mut();
+            // SAFETY: the path is NUL-terminated and sd is a valid place to
+            // write; the other outputs are optional.
+            let status = unsafe {
+                GetNamedSecurityInfoW(
+                    wide(path.as_os_str()).as_ptr(),
+                    SE_FILE_OBJECT,
+                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    &mut sd,
+                )
+            };
+            assert_eq!(status, 0, "{}", io::Error::from_raw_os_error(status as i32));
+            let result = Self::of(sd);
+            // SAFETY: GetNamedSecurityInfoW allocated sd with LocalAlloc.
+            unsafe { LocalFree(sd) };
+            result
+        }
+
+        /// The private security: owned by this user, a protected DACL with
+        /// full access for SYSTEM, Administrators and this user, with
+        /// `flags` (such as "OICI") on each entry.
+        fn private(flags: &str) -> Self {
+            let sd = SecurityDescriptor::private(false).unwrap();
+            let Self { owner, aces, .. } = Self::of(sd.as_ptr());
+            assert_eq!(aces.len(), 3, "{aces:?}");
+            assert!(aces.contains("(A;;FA;;;SY)"), "{aces:?}");
+            assert!(aces.contains("(A;;FA;;;BA)"), "{aces:?}");
+            assert!(aces.contains(&format!("(A;;FA;;;{owner})")), "{aces:?}");
+            Self {
+                owner,
+                protected: true,
+                aces: aces
+                    .iter()
+                    .map(|ace| ace.replacen("(A;;", &format!("(A;{flags};"), 1))
+                    .collect(),
+            }
+        }
     }
 
     #[test]
@@ -157,7 +176,7 @@ mod windows {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a/state");
         create_private_dir(&path).unwrap();
-        assert_eq!(dacl_of(&path), (true, private_aces("OICI")));
+        assert_eq!(Security::of_path(&path), Security::private("OICI"));
     }
 
     #[test]
@@ -165,9 +184,9 @@ mod windows {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state");
         std::fs::create_dir(&path).unwrap();
-        assert!(!dacl_of(&path).0);
+        assert!(!Security::of_path(&path).protected);
         create_private_dir(&path).unwrap();
-        assert_eq!(dacl_of(&path), (true, private_aces("OICI")));
+        assert_eq!(Security::of_path(&path), Security::private("OICI"));
     }
 
     #[test]
@@ -175,7 +194,7 @@ mod windows {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("secret.key");
         write_private(&path, b"x").unwrap();
-        assert_eq!(dacl_of(&path), (true, private_aces("")));
+        assert_eq!(Security::of_path(&path), Security::private(""));
     }
 
     #[test]
@@ -184,10 +203,10 @@ mod windows {
         let path = dir.path().join("secret.key");
         let tmp = path.with_extension("tmp");
         std::fs::write(&tmp, b"stale").unwrap();
-        assert!(!dacl_of(&tmp).0);
+        assert!(!Security::of_path(&tmp).protected);
         write_private(&path, b"x").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"x");
-        assert_eq!(dacl_of(&path), (true, private_aces("")));
+        assert_eq!(Security::of_path(&path), Security::private(""));
     }
 
     #[test]
@@ -197,6 +216,10 @@ mod windows {
         create_private_dir(&path).unwrap();
         let file = path.join("transitions.bin");
         std::fs::write(&file, b"x").unwrap();
-        assert_eq!(dacl_of(&file), (false, private_aces("ID")));
+        // The owner of a file made with std::fs is the token's default
+        // owner, which may be Administrators, so only the DACL is checked.
+        let got = Security::of_path(&file);
+        assert!(!got.protected);
+        assert_eq!(got.aces, Security::private("ID").aces);
     }
 }

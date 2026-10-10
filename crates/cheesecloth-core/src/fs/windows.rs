@@ -29,8 +29,8 @@ use windows_sys::{
             DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
             GetTokenInformation, IsWellKnownSid, OWNER_SECURITY_INFORMATION,
             PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
-            TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER, TokenUser as TOKEN_USER_CLASS,
-            WinLocalSystemSid,
+            TOKEN_ACCESS_MASK, TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER,
+            TokenUser as TOKEN_USER_CLASS, WinLocalSystemSid,
         },
         Storage::FileSystem::{CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL},
         System::Threading::{GetCurrentProcess, OpenProcessToken},
@@ -112,15 +112,7 @@ impl TokenUser {
 
     /// The user this process runs as.
     pub fn current() -> io::Result<Self> {
-        let mut token: HANDLE = ptr::null_mut();
-        // SAFETY: GetCurrentProcess returns a pseudo handle that needs no
-        // closing, and token is a valid place to write.
-        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: the call succeeded, so token is an open handle we now own.
-        let token = unsafe { OwnedHandle::from_raw_handle(token) };
-        Self::of(token.as_handle())
+        Self::of(current_token(TOKEN_QUERY)?.as_handle())
     }
 
     /// The SID. It points into `self`, so it is valid while `self` lives.
@@ -135,6 +127,19 @@ impl TokenUser {
         // SAFETY: sid() is a valid SID while self lives.
         unsafe { IsWellKnownSid(self.sid(), WinLocalSystemSid) != 0 }
     }
+}
+
+/// The token of this process, opened with `access`.
+#[allow(unsafe_code, reason = "windows-sys has no safe token calls")]
+pub fn current_token(access: TOKEN_ACCESS_MASK) -> io::Result<OwnedHandle> {
+    let mut token: HANDLE = ptr::null_mut();
+    // SAFETY: GetCurrentProcess returns a pseudo handle that needs no
+    // closing, and token is a valid place to write.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), access, &mut token) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the call succeeded, so token is an open handle we now own.
+    Ok(unsafe { OwnedHandle::from_raw_handle(token) })
 }
 
 /// Reads one class of information about `token`, which needs `TOKEN_QUERY`
@@ -273,11 +278,25 @@ fn sid_string(sid: PSID) -> io::Result<String> {
     if unsafe { ConvertSidToStringSidW(sid, &mut s) } == 0 {
         return Err(io::Error::last_os_error());
     }
-    // SAFETY: the call wrote a NUL-terminated UTF-16 string to s.
+    // SAFETY: the call wrote a NUL-terminated string that it allocated with
+    // LocalAlloc, and nothing else uses it.
+    unsafe { take_local_string(s) }
+}
+
+/// Copies the string `s` into a `String`, then frees `s`.
+///
+/// # Safety
+///
+/// `s` must be a NUL-terminated UTF-16 string that Windows allocated with
+/// LocalAlloc, and nothing may use it afterwards.
+#[allow(unsafe_code, reason = "the string comes from a raw Windows pointer")]
+pub unsafe fn take_local_string(s: PWSTR) -> io::Result<String> {
+    // SAFETY: the caller promises that s is NUL-terminated.
     let len = (0..).take_while(|&i| unsafe { *s.add(i) } != 0).count();
     // SAFETY: s is valid for len characters.
     let string = String::from_utf16(unsafe { std::slice::from_raw_parts(s, len) });
-    // SAFETY: ConvertSidToStringSidW allocated s with LocalAlloc.
+    // SAFETY: the caller promises that s came from LocalAlloc and is not used
+    // again.
     unsafe { LocalFree(s.cast()) };
     string.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
