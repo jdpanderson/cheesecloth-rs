@@ -226,9 +226,16 @@ async fn run(cli: Cli) -> Result<()> {
         },
     };
     // After the daemon case: on Windows the default address needs an
-    // existing state directory, which the daemon creates.
+    // existing state directory, which the daemon creates. So no daemon runs
+    // on a directory where this fails.
     let socket = cheesecloth_daemon::socket_path(&cli.state_dir, cli.socket.as_deref())
-        .context("finding the local API address")?;
+        .with_context(|| {
+            format!(
+                "can't reach the cheesecloth daemon at {} (is it running, and do you have \
+                 permission?)",
+                cli.state_dir.display()
+            )
+        })?;
     let value: Value = api::call(&socket, &req).await?;
     if json_out {
         println!("{}", serde_json::to_string_pretty(&value)?);
