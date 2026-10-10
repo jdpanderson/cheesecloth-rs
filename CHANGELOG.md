@@ -27,6 +27,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Windows userspace WireGuard, on a Wintun adapter. `wintun.dll` must be in
   the same directory as the executable.
+- The Windows local API: a named pipe named after the state directory, open
+  to SYSTEM, Administrators and the daemon's user only. The CLI checks who
+  serves the pipe. `--socket` takes a full pipe name (`\\.\pipe\...`).
+- On Windows the state directory, keys and state files allow only SYSTEM,
+  Administrators and the daemon's user.
+- A Windows CI job that runs the lints and tests.
 - The packages include `THIRD-PARTY-NOTICES.md`: the licenses of the crates
   built into the binary, and where to get their source code. GotaTun is under
   MPL-2.0, and its older code under BoringTun's BSD-3-Clause license.
