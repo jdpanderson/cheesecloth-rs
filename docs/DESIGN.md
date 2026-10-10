@@ -21,8 +21,13 @@ transport.
 
 The CLI sends JSON requests to a Unix socket, normally
 `<state-dir>/control.sock`, with mode `0600`. The state directory is `0700`.
-`--json` returns structured responses. Windows local IPC is not implemented.
-See the [README](README.md) for platform validation status.
+On Windows it uses a named pipe instead, named after the canonical state
+directory, so separate instances get separate pipes. The daemon creates the
+pipe as its first instance, and fails if the name is in use. The pipe's access
+list allows only SYSTEM, Administrators and the daemon's user. Before it sends
+a request, the CLI checks that the pipe server runs as SYSTEM, an
+administrator or the CLI's user. `--json` returns structured responses. See
+the [README](README.md) for platform validation status.
 
 ## Identity and state
 
@@ -168,6 +173,7 @@ On restart, unfinished shutdown cleanup must succeed before membership resumes.
 | `cleanup.json` | Unfinished interface and state cleanup. |
 
 Durable writes use atomic replacement and file/directory synchronization.
+Windows skips the directory synchronization (see [Windows](#windows)).
 Startup checks that persisted consensus and cluster identity agree.
 
 ## Clocks and retries
@@ -327,3 +333,22 @@ runtime, with a TUN device (Wintun on Windows, which needs `wintun.dll` beside
 the executable). Each interface address's prefix routes the overlay into the
 interface on every OS. No per-peer ACLs are implemented: use host firewalls to
 restrict overlay access.
+
+## Windows
+
+Windows lacks some things that other systems have, so these parts are weaker
+there:
+
+- **No directory sync.** Windows has no documented way to sync a directory.
+  File data is still synced, but creating, renaming or removing a file is
+  less durable after a power loss.
+- **No NAT openers.** Windows limits raw sockets, so the raw UDP openers are
+  not available and hole punching is weaker. More pairs of NATed peers need a
+  port mapping, manual forwarding or a public endpoint, and their control
+  messages go through relays.
+- **Elevated CLI for a SYSTEM daemon.** When the daemon runs as SYSTEM, the
+  CLI must run in an elevated shell to open the pipe.
+- **Access lists instead of modes.** The state directory, keys and state
+  files allow only SYSTEM, Administrators and the daemon's user, with
+  inheritance from the parent removed. Files the daemon creates in the
+  directory inherit that list.

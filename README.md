@@ -7,7 +7,9 @@ always travels directly between peers.
 
 **Pre-release.** Linux has end-to-end coverage with kernel WireGuard. macOS
 CI tests userspace WireGuard; multi-machine and NAT operation remain unvalidated.
-FreeBSD is unvalidated; Windows and mobile support are incomplete. The consensus
+FreeBSD is unvalidated. Windows CI builds and tests the daemon and CLI, but
+there is no Windows service or installer yet; mobile is not supported. See
+[Windows](docs/DESIGN.md#windows) for what is weaker there. The consensus
 security layer has regression tests, but no independent audit or machine-checked
 Byzantine proof.
 
@@ -180,6 +182,17 @@ tests/e2e/run.sh
 After a dependency change, regenerate `THIRD-PARTY-NOTICES.md` with
 `cargo about generate --fail about.hbs -o THIRD-PARTY-NOTICES.md`
 (`cargo install cargo-about --locked --features cli`); CI checks it.
+
+To check the Windows code from Linux or macOS, install
+[cargo-xwin](https://github.com/rust-cross/cargo-xwin), clang and the
+`x86_64-pc-windows-msvc` target, then run:
+
+```sh
+cargo xwin clippy --locked --workspace --all-targets \
+  --target x86_64-pc-windows-msvc -- -D warnings
+```
+
+Windows tests run in CI.
 
 The end-to-end lab needs Podman, or Docker with `ENGINE=docker`, and Linux
 kernel WireGuard and container network privileges. It covers direct paths,
