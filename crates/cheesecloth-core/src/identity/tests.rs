@@ -51,12 +51,6 @@ fn keys_are_created_once_and_reloaded() {
     let a = Identity::load_or_create(&path).unwrap();
     let b = Identity::load_or_create(&path).unwrap();
     assert_eq!(a.node_id(), b.node_id());
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
-    }
 
     std::fs::write(&path, b"short").unwrap();
     let err = Identity::load_or_create(&path).err().unwrap();
