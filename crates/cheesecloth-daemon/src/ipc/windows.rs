@@ -127,15 +127,15 @@ fn create(name: &Path, security: &SecurityDescriptor, first: bool) -> io::Result
 pub(super) async fn connect(name: &Path) -> Result<ClientStream> {
     check_address(name)?;
     let client = open(name).await.map_err(|e| {
-        let hint = if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) {
-            "the CLI needs an elevated shell when the daemon runs as SYSTEM"
+        let message = if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) {
+            super::unreachable_message_with(
+                name,
+                "the CLI needs an elevated shell when the daemon runs as SYSTEM",
+            )
         } else {
-            "is it running, and do you have permission?"
+            super::unreachable_message(name)
         };
-        anyhow::Error::new(e).context(format!(
-            "can't reach the cheesecloth daemon at {} ({hint})",
-            name.display()
-        ))
+        anyhow::Error::new(e).context(message)
     })?;
     check_server(&client, name)?;
     Ok(client)

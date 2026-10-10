@@ -229,13 +229,7 @@ async fn run(cli: Cli) -> Result<()> {
     // existing state directory, which the daemon creates. So no daemon runs
     // on a directory where this fails.
     let socket = cheesecloth_daemon::socket_path(&cli.state_dir, cli.socket.as_deref())
-        .with_context(|| {
-            format!(
-                "can't reach the cheesecloth daemon at {} (is it running, and do you have \
-                 permission?)",
-                cli.state_dir.display()
-            )
-        })?;
+        .with_context(|| cheesecloth_daemon::unreachable_message(&cli.state_dir))?;
     let value: Value = api::call(&socket, &req).await?;
     if json_out {
         println!("{}", serde_json::to_string_pretty(&value)?);

@@ -59,11 +59,5 @@ impl Listener {
 pub(super) async fn connect(socket: &Path) -> Result<ClientStream> {
     tokio::net::UnixStream::connect(socket)
         .await
-        .with_context(|| {
-            format!(
-                "can't reach the cheesecloth daemon at {} (is it running, and do you have \
-             permission?)",
-                socket.display()
-            )
-        })
+        .with_context(|| super::unreachable_message(socket))
 }

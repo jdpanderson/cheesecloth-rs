@@ -30,5 +30,19 @@ pub(crate) async fn connect(addr: &Path) -> anyhow::Result<ClientStream> {
     os::connect(addr).await
 }
 
+/// The error text when the daemon at `addr` can't be reached.
+pub fn unreachable_message(addr: &Path) -> String {
+    unreachable_message_with(addr, "is it running, and do you have permission?")
+}
+
+/// The error text when the daemon at `addr` can't be reached, with `hint`
+/// to say what to check.
+fn unreachable_message_with(addr: &Path, hint: &str) -> String {
+    format!(
+        "can't reach the cheesecloth daemon at {} ({hint})",
+        addr.display()
+    )
+}
+
 #[cfg(test)]
 mod tests;
