@@ -88,9 +88,10 @@ impl Daemon {
         }
     }
 
-    /// Serves the local API until the process exits.
+    /// Serves the local API until the daemon has shut down. During shutdown a
+    /// `stop` is still queued, and other requests get an error.
     pub async fn serve_api(self: Arc<Self>) -> Result<()> {
-        self.api_work
+        self.api_conns
             .run(async {
                 let addr = self.opts.socket_path()?;
                 let mut listener = ipc::Listener::bind(&addr)?;
@@ -98,7 +99,7 @@ impl Daemon {
                 loop {
                     let stream = listener.accept().await?;
                     let daemon = self.clone();
-                    self.api_work.spawn(async move {
+                    self.api_conns.spawn(async move {
                         let (read, mut write) = tokio::io::split(stream);
                         let mut lines = BufReader::new(read).lines();
                         while let Ok(Some(line)) = lines.next_line().await {
@@ -107,7 +108,13 @@ impl Daemon {
                                     daemon.request_stop(write);
                                     return;
                                 }
-                                Ok(req) => daemon.handle_api(req).await,
+                                Ok(req) => daemon
+                                    .api_work
+                                    .run(daemon.handle_api(req))
+                                    .await
+                                    .unwrap_or_else(|_| {
+                                        ApiResponse::Err("the daemon is shutting down".into())
+                                    }),
                                 Err(e) => ApiResponse::Err(format!("bad request: {e}")),
                             };
                             if write_response(&mut write, &resp).await.is_err() {
@@ -182,24 +189,16 @@ mod tests {
     async fn every_stop_request_is_answered() {
         let (d, _dir) = crate::testing::daemon("api-stop-twice", crate::RelayMode::Never).await;
         let (server, socket) = serve(&d).await;
-        // Holding the operation lock keeps shutdown from starting, so both
-        // requests are queued before it answers.
+        // Holding the operation lock keeps shutdown from finishing. Shutdown
+        // starts with the first stop; the second client connects after that.
         let op = d.op.lock().await;
-        // The first stop closes the listener, so both clients connect and get
-        // an answer before either sends stop. (A pipe client on Windows can
-        // only connect once the server has made a free instance.)
         let mut clients = Vec::new();
-        for _ in 0..2 {
+        for n in 1..=2 {
             let (read, mut write) = tokio::io::split(ipc::connect(&socket).await.unwrap());
-            let mut lines = BufReader::new(read).lines();
-            write.write_all(b"{\"cmd\":\"status\"}\n").await.unwrap();
-            within(lines.next_line()).await.unwrap().unwrap();
-            clients.push((lines, write));
-        }
-        for (_, write) in &mut clients {
             write.write_all(b"{\"cmd\":\"stop\"}\n").await.unwrap();
+            queued(&d, n).await;
+            clients.push((BufReader::new(read).lines(), write));
         }
-        queued(&d, 2).await;
         drop(op);
         for (lines, _) in &mut clients {
             assert_eq!(
@@ -207,6 +206,28 @@ mod tests {
                 "{\"ok\":null}"
             );
         }
+        within(server).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn other_requests_during_shutdown_get_an_error() {
+        let (d, _dir) = crate::testing::daemon("api-stopping", crate::RelayMode::Never).await;
+        let (server, socket) = serve(&d).await;
+        // As in shutdown: the API work has stopped, the listener has not.
+        d.api_work.stop().await;
+        let client = ipc::connect(&socket).await.unwrap();
+        let (read, mut write) = tokio::io::split(client);
+        let mut lines = BufReader::new(read).lines();
+        write
+            .write_all(b"{\"cmd\":\"status\"}\n{\"cmd\":\"stop\"}\n")
+            .await
+            .unwrap();
+        let status = within(lines.next_line()).await.unwrap().unwrap();
+        assert!(status.contains("the daemon is shutting down"), "{status}");
+        assert_eq!(
+            within(lines.next_line()).await.unwrap().unwrap(),
+            "{\"ok\":null}"
+        );
         within(server).await.unwrap().unwrap();
     }
 
