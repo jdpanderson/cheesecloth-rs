@@ -55,7 +55,7 @@ jobs:
       - name: Lint
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Test
-        run: cargo test --locked --workspace
+        run: cargo test --locked --workspace --no-fail-fast
       - name: Docs
         env:
           RUSTDOCFLAGS: -D warnings
@@ -131,7 +131,7 @@ jobs:
       # In the debug profile, like the checks job: it builds faster than the
       # release profile with LTO, and turns on debug assertions.
       - name: Test
-        run: cargo test --locked --workspace
+        run: cargo test --locked --workspace --no-fail-fast
       - name: Test macOS userspace WireGuard
         timeout-minutes: 5
         run: |
@@ -168,7 +168,7 @@ jobs:
       - name: Lint
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Test
-        run: cargo test --locked --workspace
+        run: cargo test --locked --workspace --no-fail-fast
 
   debian:
     name: Debian 13 (amd64)
