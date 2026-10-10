@@ -169,7 +169,9 @@ fn bind_socket(addr: SocketAddr) -> Result<std::net::UdpSocket> {
             SDomain::IPV4
         };
         let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-        if addr.is_ipv6() {
+        // Not for one IPv6 address: quinn-udp then sets IPv4 options, which
+        // Windows refuses (quinn issue #2682).
+        if addr.is_ipv6() && addr.ip().is_unspecified() {
             socket.set_only_v6(false)?;
         }
         socket.bind(&addr.into())?;
