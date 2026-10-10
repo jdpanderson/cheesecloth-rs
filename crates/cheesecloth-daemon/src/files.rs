@@ -7,7 +7,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use cheesecloth_core::{ClusterId, fs::write_private, token::TokenPeer};
+use cheesecloth_core::{
+    ClusterId,
+    fs::{sync_dir, write_private},
+    token::TokenPeer,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// A join waiting for approvals.
@@ -77,7 +81,7 @@ impl Files {
 
     pub fn save_cleanup(&self, cleanup: &Cleanup) -> Result<()> {
         write_private(&self.cleanup(), &serde_json::to_vec_pretty(cleanup)?)?;
-        fs::File::open(&self.dir)?.sync_all()?;
+        sync_dir(&self.dir)?;
         Ok(())
     }
 
@@ -86,7 +90,7 @@ impl Files {
             self.delete_cluster()?;
         }
         self.remove_files([self.cleanup()])?;
-        fs::File::open(&self.dir)?.sync_all()?;
+        sync_dir(&self.dir)?;
         Ok(())
     }
 
@@ -120,7 +124,7 @@ impl Files {
 
     pub fn save_cluster(&self, c: &ClusterFile) -> Result<()> {
         write_private(&self.cluster(), &serde_json::to_vec_pretty(c)?)?;
-        fs::File::open(&self.dir)?.sync_all()?;
+        sync_dir(&self.dir)?;
         Ok(())
     }
 
@@ -139,7 +143,7 @@ impl Files {
     /// Removes the acceptor state in the old format, and syncs the directory.
     pub fn delete_legacy_acceptor(&self) -> Result<()> {
         self.remove_files([self.legacy_acceptor()])?;
-        fs::File::open(&self.dir)?.sync_all()?;
+        sync_dir(&self.dir)?;
         Ok(())
     }
 
@@ -147,17 +151,16 @@ impl Files {
     /// pending record until other cleanup succeeds, and sync its deletion
     /// before the caller reports success.
     pub fn delete_pending(&self) -> Result<()> {
-        let dir = fs::File::open(&self.dir)?;
         self.delete_consensus()?;
         self.remove_files([self.cluster()])?;
-        dir.sync_all().context("syncing pending join cancellation")
+        sync_dir(&self.dir).context("syncing pending join cancellation")
     }
 
     /// Forgets the cluster (keeps this node's keys).
     pub fn delete_cluster(&self) -> Result<()> {
         self.delete_consensus()?;
         self.remove_files([self.cluster()])?;
-        fs::File::open(&self.dir)?.sync_all()?;
+        sync_dir(&self.dir)?;
         Ok(())
     }
 
@@ -205,7 +208,7 @@ pub fn save<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
     };
-    fs::File::open(dir)?.sync_all()
+    sync_dir(dir)
 }
 
 /// Reads a value written by [`save`], or `None` if there is no file.
