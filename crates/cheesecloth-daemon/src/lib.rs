@@ -71,7 +71,12 @@ pub struct Daemon {
     identity: Arc<Identity>,
     wg_private: [u8; 32],
     net: Net,
+    /// Local API requests. Stopped first in shutdown, so none runs while the
+    /// node stops.
     api_work: Arc<lifetime::Lifetime>,
+    /// The local API listener and its connections. Stopped last in shutdown,
+    /// so a `stop` that comes during shutdown is still queued and answered.
+    api_conns: Arc<lifetime::Lifetime>,
     phase: RwLock<Phase>,
     /// Serialises init/join/leave.
     op: tokio::sync::Mutex<()>,
@@ -110,6 +115,7 @@ impl Daemon {
                 wg_private,
                 net: bound.start(callbacks.clone(), callbacks),
                 api_work: Arc::default(),
+                api_conns: Arc::default(),
                 phase: RwLock::new(Phase::None),
                 op: tokio::sync::Mutex::new(()),
                 pending_poll: Mutex::new(None),
@@ -190,6 +196,7 @@ impl Daemon {
             *self.phase.write() = Phase::Stopped;
         }
         self.net.close();
+        self.api_conns.stop().await;
         self.answer_stop_requests().await;
     }
 }
@@ -270,8 +277,8 @@ pub async fn run(opts: Options) -> Result<()> {
     serve(daemon, stop::requested()).await
 }
 
-/// Serves the local API until `signal` completes, a `stop` request arrives or
-/// the API fails, then shuts the daemon down.
+/// Serves the local API. When `signal` completes, a `stop` request arrives or
+/// the API fails, shuts the daemon down.
 async fn serve(daemon: Arc<Daemon>, signal: impl Future<Output = ()>) -> Result<()> {
     let mut api = tokio::spawn(daemon.clone().serve_api());
     let stop = tokio::select! {
@@ -279,17 +286,14 @@ async fn serve(daemon: Arc<Daemon>, signal: impl Future<Output = ()>) -> Result<
         _ = signal => Ok("shutting down"),
         _ = daemon.stop_requested.notified() => Ok("shutting down: stop requested"),
     };
-    let result = match stop {
-        Err(r) => r.map_err(anyhow::Error::from).and_then(|r| r),
-        Ok(reason) => {
-            info!("{reason}");
-            api.abort();
-            match api.await {
-                Err(e) if e.is_cancelled() => Ok(()),
-                r => r.map_err(anyhow::Error::from).and_then(|r| r),
-            }
-        }
-    };
+    if let Ok(reason) = stop {
+        info!("{reason}");
+    }
+    // The API keeps serving during shutdown, which ends it.
     daemon.shutdown().await;
-    result
+    let result = match stop {
+        Err(r) => r,
+        Ok(_) => api.await,
+    };
+    result.map_err(anyhow::Error::from).and_then(|r| r)
 }

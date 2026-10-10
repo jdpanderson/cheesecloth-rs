@@ -42,6 +42,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - A key or state file written after a failed write no longer keeps the
   permissions of the temporary file that the failed write left.
+- A `cheesecloth stop` sent while the daemon is already shutting down waits
+  for the shutdown and gets its answer, in place of "can't reach the
+  cheesecloth daemon". Other requests that shutdown cuts off get "the daemon
+  is shutting down".
 
 ## [0.2.1] - 2026-10-08
 
