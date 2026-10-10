@@ -394,7 +394,15 @@ async fn raw_connect(to: &Node, as_id: &Identity) -> quinn::Connection {
 /// Like `raw_connect`, from and to the loopback address `ip`.
 async fn raw_connect_via(to: &Node, as_id: &Identity, ip: &str) -> quinn::Connection {
     let ip: std::net::IpAddr = ip.parse().unwrap();
-    let ep = quinn::Endpoint::client((ip, 0).into()).unwrap();
+    // Not `Endpoint::client`: it makes a `::1` socket dual-stack, which fails
+    // on Windows (https://github.com/quinn-rs/quinn/issues/2682).
+    let ep = quinn::Endpoint::new(
+        quinn::EndpointConfig::default(),
+        None,
+        std::net::UdpSocket::bind((ip, 0)).unwrap(),
+        Arc::new(quinn::TokioRuntime),
+    )
+    .unwrap();
     let cfg = cheesecloth_net::tls::client_config(
         as_id,
         to.id,
@@ -499,6 +507,15 @@ async fn guests_are_capped_per_address() {
     let g4 = raw_connect_via(&a, &Identity::generate(), "127.0.0.1").await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(g4.close_reason().is_none(), "room after a guest left");
+}
+
+#[tokio::test]
+async fn a_node_can_bind_one_ipv6_address() {
+    let dir = cluster();
+    let a = strict_with(&dir, 30, 64, |o| o.bind = "[::1]:0".parse().unwrap());
+    dir.members.lock().unwrap().insert(a.id);
+    let conn = raw_connect_via(&a, &Identity::generate(), "::1").await;
+    assert!(conn.close_reason().is_none());
 }
 
 #[tokio::test]
