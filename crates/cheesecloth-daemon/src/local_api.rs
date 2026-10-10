@@ -185,17 +185,28 @@ mod tests {
         // Holding the operation lock keeps shutdown from starting, so both
         // requests are queued before it answers.
         let op = d.op.lock().await;
-        let stop = || {
-            let socket = socket.clone();
-            tokio::spawn(async move {
-                crate::api::call::<serde_json::Value>(&socket, &ApiRequest::Stop).await
-            })
-        };
-        let (first, second) = (stop(), stop());
+        // The first stop closes the listener, so both clients connect and get
+        // an answer before either sends stop. (A pipe client on Windows can
+        // only connect once the server has made a free instance.)
+        let mut clients = Vec::new();
+        for _ in 0..2 {
+            let (read, mut write) = tokio::io::split(ipc::connect(&socket).await.unwrap());
+            let mut lines = BufReader::new(read).lines();
+            write.write_all(b"{\"cmd\":\"status\"}\n").await.unwrap();
+            within(lines.next_line()).await.unwrap().unwrap();
+            clients.push((lines, write));
+        }
+        for (_, write) in &mut clients {
+            write.write_all(b"{\"cmd\":\"stop\"}\n").await.unwrap();
+        }
         queued(&d, 2).await;
         drop(op);
-        assert!(within(first).await.unwrap().unwrap().is_null());
-        assert!(within(second).await.unwrap().unwrap().is_null());
+        for (lines, _) in &mut clients {
+            assert_eq!(
+                within(lines.next_line()).await.unwrap().unwrap(),
+                "{\"ok\":null}"
+            );
+        }
         within(server).await.unwrap().unwrap();
     }
 
