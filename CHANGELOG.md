@@ -32,6 +32,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   serves the pipe. `--socket` takes a full pipe name (`\\.\pipe\...`).
 - On Windows the state directory, keys and state files allow only SYSTEM,
   Administrators and the daemon's user.
+- On Windows the daemon stops cleanly on Ctrl-C or Ctrl-Break.
 - A Windows CI job that runs the lints and tests.
 - The packages include `THIRD-PARTY-NOTICES.md`: the licenses of the crates
   built into the binary, and where to get their source code. GotaTun is under

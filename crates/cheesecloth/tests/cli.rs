@@ -30,8 +30,8 @@ impl Daemon {
 
     /// Starts a daemon on an existing state directory.
     fn start_in(dir: tempfile::TempDir, name: &str, relay: &str) -> Daemon {
-        let child = Command::new(BIN)
-            .arg("--state-dir")
+        let mut cmd = Command::new(BIN);
+        cmd.arg("--state-dir")
             .arg(dir.path())
             .args(["daemon", "--wireguard", "mock", "--no-port-mapping"])
             .args(["--bind", "127.0.0.1", "--relay", relay, "--name", name])
@@ -39,9 +39,14 @@ impl Daemon {
             .args(["--listen-port", "0"])
             .args(["--wg-port", &free_port().to_string()])
             .args(["--keepalive", "20"])
-            .env_remove("CHEESECLOTH_SOCKET")
-            .spawn()
-            .unwrap();
+            .env_remove("CHEESECLOTH_SOCKET");
+        // Its own process group, so `stop` can send Ctrl-Break to it alone.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP);
+        }
+        let child = cmd.spawn().unwrap();
         let d = Daemon { child, dir };
         // A daemon that ran on this directory before leaves its socket file,
         // so wait for an answer, not for the file.
@@ -82,16 +87,9 @@ impl Daemon {
         serde_json::from_str(&self.ok(&all)).unwrap()
     }
 
-    /// Stops the daemon the way a service manager does.
+    /// Stops the daemon with the OS's stop request.
     fn stop(mut self) {
-        let pid = self.child.id().to_string();
-        assert!(
-            Command::new("kill")
-                .args(["-TERM", &pid])
-                .status()
-                .unwrap()
-                .success()
-        );
+        request_stop(self.child.id());
         self.wait_for_exit();
     }
 
@@ -123,6 +121,29 @@ impl Drop for Daemon {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Sends SIGTERM, as a service manager does.
+#[cfg(unix)]
+fn request_stop(pid: u32) {
+    assert!(
+        Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+/// Sends Ctrl-Break to the process group of `pid`. `start_in` gives each
+/// daemon its own group, so only the daemon gets it.
+#[cfg(windows)]
+#[allow(unsafe_code, reason = "windows-sys has no safe console event call")]
+fn request_stop(pid: u32) {
+    use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
+    // SAFETY: the call takes no pointers.
+    let ok = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid) };
+    assert!(ok != 0, "{}", std::io::Error::last_os_error());
 }
 
 fn cli_in(state_dir: &Path, args: &[&str]) -> Output {
