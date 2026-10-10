@@ -19,3 +19,14 @@
 - We choose the best solution, even if it is complex.
 - If two solutions are equally good, we choose the simpler one.
 
+## Autonomy
+The agent works without permission prompts where it can:
+- Read files with the Read tool; change them with Edit or Write.
+- Bash is for simple commands (cargo, git, gh) with paths relative to the
+  repo root. No `cd`, absolute or `~/` paths, `$(...)`, loops, heredocs,
+  or `sed`/`awk`/`python` scripts.
+- Commit with `git commit -m "<subject>" -m "<trailer>"`.
+- Wait for CI with `gh pr checks <n> --watch`.
+- Put temporary files under `target/`.
+- Give these rules to every sub-agent.
+
