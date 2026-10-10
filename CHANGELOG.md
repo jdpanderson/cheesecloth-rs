@@ -6,6 +6,25 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- The Windows local API: a named pipe named after the state directory, open
+  to SYSTEM, Administrators and the daemon's user only. The CLI checks who
+  serves the pipe. `--socket` takes a full pipe name (`\\.\pipe\...`).
+- On Windows the state directory, keys and state files allow only SYSTEM,
+  Administrators and the daemon's user.
+- On Windows the daemon stops cleanly on Ctrl-C or Ctrl-Break.
+- A Windows CI job that runs the lints and tests.
+
+### Fixed
+
+- A key or state file written after a failed write no longer keeps the
+  permissions of the temporary file that the failed write left.
+- A `cheesecloth stop` sent while the daemon is already shutting down waits
+  for the shutdown and gets its answer, in place of "can't reach the
+  cheesecloth daemon". Other requests that shutdown cuts off get "the daemon
+  is shutting down".
+
 ## [0.3.0] - 2026-10-09
 
 ### Changed
@@ -27,25 +46,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Windows userspace WireGuard, on a Wintun adapter. `wintun.dll` must be in
   the same directory as the executable.
-- The Windows local API: a named pipe named after the state directory, open
-  to SYSTEM, Administrators and the daemon's user only. The CLI checks who
-  serves the pipe. `--socket` takes a full pipe name (`\\.\pipe\...`).
-- On Windows the state directory, keys and state files allow only SYSTEM,
-  Administrators and the daemon's user.
-- On Windows the daemon stops cleanly on Ctrl-C or Ctrl-Break.
-- A Windows CI job that runs the lints and tests.
 - The packages include `THIRD-PARTY-NOTICES.md`: the licenses of the crates
   built into the binary, and where to get their source code. GotaTun is under
   MPL-2.0, and its older code under BoringTun's BSD-3-Clause license.
-
-### Fixed
-
-- A key or state file written after a failed write no longer keeps the
-  permissions of the temporary file that the failed write left.
-- A `cheesecloth stop` sent while the daemon is already shutting down waits
-  for the shutdown and gets its answer, in place of "can't reach the
-  cheesecloth daemon". Other requests that shutdown cuts off get "the daemon
-  is shutting down".
 
 ## [0.2.1] - 2026-10-08
 
