@@ -27,6 +27,12 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("tmp");
+    // A file left by an earlier attempt would keep its permissions, so the
+    // new file is always created from nothing.
+    match std::fs::remove_file(&tmp) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
     {
         use std::io::Write;
         let mut f = os::create_private_file(&tmp)?;

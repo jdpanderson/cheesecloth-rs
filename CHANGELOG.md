@@ -38,6 +38,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   built into the binary, and where to get their source code. GotaTun is under
   MPL-2.0, and its older code under BoringTun's BSD-3-Clause license.
 
+### Fixed
+
+- A key or state file written after a failed write no longer keeps the
+  permissions of the temporary file that the failed write left.
+
 ## [0.2.1] - 2026-10-08
 
 ### Fixed
