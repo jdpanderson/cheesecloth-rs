@@ -41,6 +41,7 @@ use parking_lot::{Mutex, RwLock};
 use tokio::sync::Notify;
 use tracing::{info, warn};
 
+pub use ipc::unreachable_message;
 pub use options::{Options, RelayMode, socket_path};
 
 use files::{Cleanup, Files, PendingJoin};

@@ -357,3 +357,5 @@ there:
   files allow only SYSTEM, Administrators and the daemon's user, with
   inheritance from the parent removed. Files the daemon creates in the
   directory inherit that list.
+- **IPv4-mapped bind is IPv6-only.** A bind address like `::ffff:a.b.c.d` is
+  IPv6-only on Windows. Only the unspecified address `[::]` is dual-stack.
