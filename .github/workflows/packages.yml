@@ -19,7 +19,7 @@ env:
 
 jobs:
   # The whole test suite runs once here. The Linux package jobs do not repeat
-  # it; the macOS jobs do, because macOS has its own code paths.
+  # it; the macOS and Windows jobs do, because they have their own code paths.
   checks:
     name: Checks (Linux)
     runs-on: ubuntu-24.04
@@ -148,6 +148,28 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  windows:
+    name: Windows (x86_64)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select stable Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup component add clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Lint
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked --workspace
+
   debian:
     name: Debian 13 (amd64)
     runs-on: ubuntu-24.04
@@ -226,7 +248,7 @@ jobs:
   release:
     name: Publish release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [checks, msrv, deny, macos, debian, arch]
+    needs: [checks, msrv, deny, macos, windows, debian, arch]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
