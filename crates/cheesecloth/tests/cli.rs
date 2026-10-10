@@ -316,6 +316,14 @@ fn the_cli_reports_errors() {
     let out = cli_in(dir.path(), &["status"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).starts_with("error: "));
+    // A state directory that does not exist yet, as before the first start.
+    let out = cli_in(&dir.path().join("missing"), &["status"]);
+    assert!(
+        out.stderr
+            .starts_with(b"error: can't reach the cheesecloth daemon at "),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let out = Command::new(BIN).arg("--help").output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("Usage"));
