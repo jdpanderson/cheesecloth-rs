@@ -1,28 +1,104 @@
-//! Windows security helpers: a token's user SID and the private security
-//! descriptor. The daemon's local API pipe uses them too, so there is one copy.
+//! Windows: private files and directories through access lists that allow
+//! only SYSTEM, Administrators and the current user. Also the security
+//! helpers behind them (a token's user SID, the private security
+//! descriptor), which the daemon's local API pipe uses too, so there is one
+//! copy.
 
 use std::{
+    ffi::OsStr,
+    fs::File,
     io, iter,
-    os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle},
+    os::windows::{
+        ffi::OsStrExt,
+        io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle},
+    },
+    path::Path,
     ptr,
 };
 
 use windows_sys::{
     Win32::{
-        Foundation::{HANDLE, LocalFree},
+        Foundation::{
+            ERROR_ALREADY_EXISTS, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
+        },
         Security::{
             Authorization::{
                 ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-                SDDL_REVISION_1,
+                SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
             },
-            GetTokenInformation, IsWellKnownSid, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+            DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
+            GetTokenInformation, IsWellKnownSid, OWNER_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
             TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER, TokenUser as TOKEN_USER_CLASS,
             WinLocalSystemSid,
         },
+        Storage::FileSystem::{CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL},
         System::Threading::{GetCurrentProcess, OpenProcessToken},
     },
     core::PWSTR,
 };
+
+/// Creates the directory with the private access list, which its children
+/// inherit. An existing directory gets the same owner and access list, so
+/// there is no moment when it has the access list of its parent.
+#[allow(unsafe_code, reason = "windows-sys has no safe directory creation")]
+pub(super) fn create_private_dir(dir: &Path) -> io::Result<()> {
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let security = SecurityDescriptor::private(true)?;
+    let attributes = security.attributes();
+    let path = wide(dir.as_os_str());
+    // SAFETY: path is a live, NUL-terminated UTF-16 string, and attributes
+    // and its descriptor live until the call returns.
+    if unsafe { CreateDirectoryW(path.as_ptr(), &attributes) } != 0 {
+        return Ok(());
+    }
+    let err = io::Error::last_os_error();
+    if err.raw_os_error() != Some(ERROR_ALREADY_EXISTS as i32) || !dir.is_dir() {
+        return Err(err);
+    }
+    security.apply(&path)
+}
+
+/// Creates a new file with the private access list. A file left by an
+/// earlier attempt is removed first, because Windows ignores the access list
+/// when it opens an existing file.
+#[allow(unsafe_code, reason = "windows-sys has no safe file creation")]
+pub(super) fn create_private_file(path: &Path) -> io::Result<File> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    let security = SecurityDescriptor::private(false)?;
+    let attributes = security.attributes();
+    let path = wide(path.as_os_str());
+    // SAFETY: path is a live, NUL-terminated UTF-16 string, attributes and
+    // its descriptor live until the call returns, and no template is given.
+    let handle = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            GENERIC_WRITE,
+            0,
+            &attributes,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
+            ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the call succeeded, so handle is an open file handle we now own.
+    Ok(File::from(unsafe { OwnedHandle::from_raw_handle(handle) }))
+}
+
+/// Does nothing. Windows has no documented way to sync a directory, so
+/// creating, renaming or removing a file is less durable after a power loss.
+/// The file data is still synced. `pnyx::store` does the same.
+pub(super) fn sync_dir(_dir: &Path) -> io::Result<()> {
+    Ok(())
+}
 
 /// The user SID of a token.
 pub struct TokenUser(Vec<usize>);
@@ -107,7 +183,7 @@ impl SecurityDescriptor {
     }
 
     fn from_sddl(sddl: &str) -> io::Result<Self> {
-        let sddl = wide(sddl);
+        let sddl = wide(OsStr::new(sddl));
         let mut sd: PSECURITY_DESCRIPTOR = ptr::null_mut();
         // SAFETY: sddl is a live, NUL-terminated UTF-16 string and sd is a
         // valid place to write; the size output is optional.
@@ -123,6 +199,45 @@ impl SecurityDescriptor {
             return Err(io::Error::last_os_error());
         }
         Ok(Self(sd))
+    }
+
+    /// Sets the owner and the protected access list of this descriptor on
+    /// the file or directory `path` (NUL-terminated UTF-16).
+    fn apply(&self, path: &[u16]) -> io::Result<()> {
+        let mut defaulted = 0;
+        let mut owner: PSID = ptr::null_mut();
+        // SAFETY: self.0 is a valid descriptor, and owner and defaulted are
+        // valid places to write. owner points into self.0.
+        if unsafe { GetSecurityDescriptorOwner(self.0, &mut owner, &mut defaulted) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut present = 0;
+        let mut dacl = ptr::null_mut();
+        // SAFETY: as above; dacl points into self.0.
+        let ok =
+            unsafe { GetSecurityDescriptorDacl(self.0, &mut present, &mut dacl, &mut defaulted) };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: path is NUL-terminated, and owner and dacl are valid while
+        // self lives; the call only reads them.
+        let status = unsafe {
+            SetNamedSecurityInfoW(
+                path.as_ptr(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION
+                    | DACL_SECURITY_INFORMATION
+                    | PROTECTED_DACL_SECURITY_INFORMATION,
+                owner,
+                ptr::null_mut(),
+                dacl,
+                ptr::null(),
+            )
+        };
+        if status != 0 {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        Ok(())
     }
 
     /// The descriptor itself, valid while `self` lives.
@@ -168,6 +283,6 @@ fn sid_string(sid: PSID) -> io::Result<String> {
 }
 
 /// `s` as a NUL-terminated UTF-16 string.
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(iter::once(0)).collect()
+pub(super) fn wide(s: &OsStr) -> Vec<u16> {
+    s.encode_wide().chain(iter::once(0)).collect()
 }

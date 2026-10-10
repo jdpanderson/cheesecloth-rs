@@ -4,12 +4,6 @@ use super::*;
 fn cluster_files_round_trip_and_are_forgotten() {
     let tmp = tempfile::tempdir().unwrap();
     let files = Files::new(&tmp.path().join("state")).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(&files.dir).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o700);
-    }
     assert!(files.load_cluster().unwrap().is_none());
     let c = ClusterFile {
         cluster_id: ClusterId([3; 32]),

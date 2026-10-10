@@ -42,12 +42,8 @@ pub struct Files {
 
 impl Files {
     pub fn new(dir: &Path) -> Result<Self> {
-        fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
-        }
+        cheesecloth_core::fs::create_private_dir(dir)
+            .with_context(|| format!("creating {}", dir.display()))?;
         Ok(Self {
             dir: dir.to_path_buf(),
         })
