@@ -75,13 +75,14 @@ mod windows {
     #![allow(unsafe_code, reason = "the tests read access lists with windows-sys")]
 
     use std::{
-        collections::BTreeSet,
         os::windows::io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle},
         path::Path,
         ptr,
     };
 
-    use cheesecloth_core::fs::windows::{SecurityDescriptor, TokenUser};
+    use cheesecloth_core::fs::windows::{
+        SecurityDescriptor, TokenUser, current_token, take_local_string,
+    };
     use windows_sys::Win32::{
         Foundation::{HANDLE, LocalFree},
         Security::{
@@ -89,11 +90,10 @@ mod windows {
                 ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo,
                 SDDL_REVISION_1, SE_KERNEL_OBJECT,
             },
-            CreateRestrictedToken, CreateWellKnownSid, DACL_SECURITY_INFORMATION,
-            PSECURITY_DESCRIPTOR, SID_AND_ATTRIBUTES, TOKEN_DUPLICATE, TOKEN_QUERY,
-            WinBuiltinAdministratorsSid, WinLocalServiceSid,
+            CheckTokenMembership, CreateRestrictedToken, CreateWellKnownSid,
+            DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SID_AND_ATTRIBUTES, TOKEN_DUPLICATE,
+            TOKEN_QUERY, WinBuiltinAdministratorsSid, WinLocalServiceSid,
         },
-        System::Threading::{GetCurrentProcess, OpenProcessToken},
     };
 
     use super::*;
@@ -144,8 +144,8 @@ mod windows {
         }
     }
 
-    /// Whether the DACL of `sd` is protected, and its entries.
-    fn dacl(sd: PSECURITY_DESCRIPTOR) -> (bool, BTreeSet<String>) {
+    /// The DACL of `sd` as an SDDL string.
+    fn dacl(sd: PSECURITY_DESCRIPTOR) -> String {
         let mut s = ptr::null_mut();
         // SAFETY: sd is a valid descriptor and s is a valid place to write.
         let ok = unsafe {
@@ -158,20 +158,20 @@ mod windows {
             )
         };
         assert_ne!(ok, 0, "{}", io::Error::last_os_error());
-        // SAFETY: the call wrote a NUL-terminated UTF-16 string to s.
-        let len = (0..).take_while(|&i| unsafe { *s.add(i) } != 0).count();
-        // SAFETY: s is valid for len characters.
-        let sddl = String::from_utf16(unsafe { std::slice::from_raw_parts(s, len) }).unwrap();
-        // SAFETY: the call allocated s with LocalAlloc.
-        unsafe { LocalFree(s.cast()) };
-        let rest = sddl.strip_prefix("D:").expect(&sddl);
-        let protected = rest.starts_with('P');
-        let aces = rest
-            .split('(')
-            .skip(1)
-            .map(|ace| format!("({ace}"))
-            .collect();
-        (protected, aces)
+        // SAFETY: the call allocated s with LocalAlloc, and only this code
+        // uses it.
+        unsafe { take_local_string(s) }.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_pipe_prefix_in_upper_case_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let addr = default_address(dir.path()).unwrap();
+        let addr = addr.to_str().unwrap().replacen(r"\pipe\", r"\PIPE\", 1);
+        let mut listener = Listener::bind(Path::new(&addr)).unwrap();
+        let server = tokio::spawn(async move { listener.accept().await.unwrap() });
+        within(connect(Path::new(&addr))).await.unwrap();
+        within(server).await.unwrap();
     }
 
     #[tokio::test]
@@ -195,26 +195,13 @@ mod windows {
             )
         };
         assert_eq!(status, 0, "{}", io::Error::from_raw_os_error(status as i32));
-        let (protected, aces) = dacl(sd);
+        let got = dacl(sd);
         // SAFETY: GetSecurityInfo allocated sd with LocalAlloc.
         unsafe { LocalFree(sd) };
-        assert!(protected, "{aces:?}");
-        let (_, expected) = dacl(SecurityDescriptor::private(false).unwrap().as_ptr());
-        assert_eq!(aces, expected);
-        assert_eq!(aces.len(), 3, "{aces:?}");
-        assert!(aces.contains("(A;;FA;;;SY)"), "{aces:?}");
-        assert!(aces.contains("(A;;FA;;;BA)"), "{aces:?}");
-    }
-
-    /// This process's token, with `access`.
-    fn my_token(access: u32) -> OwnedHandle {
-        let mut token: HANDLE = ptr::null_mut();
-        // SAFETY: GetCurrentProcess returns a pseudo handle and token is a
-        // valid place to write.
-        let ok = unsafe { OpenProcessToken(GetCurrentProcess(), access, &mut token) };
-        assert_ne!(ok, 0, "{}", io::Error::last_os_error());
-        // SAFETY: the call succeeded, so token is an open handle we now own.
-        unsafe { OwnedHandle::from_raw_handle(token) }
+        // The private descriptor's own tests are in cheesecloth-core.
+        let expected = dacl(SecurityDescriptor::private(false).unwrap().as_ptr());
+        assert!(expected.starts_with("D:P(A;;FA;;;SY)"), "{expected}");
+        assert_eq!(got, expected);
     }
 
     /// A well-known SID.
@@ -232,7 +219,29 @@ mod windows {
     #[test]
     fn a_server_that_runs_as_this_user_is_trusted() {
         let me = TokenUser::current().unwrap();
-        assert!(is_trusted(my_token(TOKEN_QUERY).as_handle(), me.sid()).unwrap());
+        let token = current_token(TOKEN_QUERY).unwrap();
+        assert!(is_trusted(token.as_handle(), me.sid()).unwrap());
+    }
+
+    /// The test runs as a user that is not LocalService, so only the
+    /// Administrators group can make it trusted. GitHub's Windows runners are
+    /// elevated, so there this tests the trusted case.
+    #[test]
+    fn a_server_with_administrators_enabled_is_trusted() {
+        let mut admins = well_known(WinBuiltinAdministratorsSid);
+        let mut is_admin = 0;
+        // SAFETY: a null token means this thread's token, admins is a valid
+        // SID, and is_admin is a valid place to write.
+        let ok = unsafe {
+            CheckTokenMembership(ptr::null_mut(), admins.as_mut_ptr().cast(), &mut is_admin)
+        };
+        assert_ne!(ok, 0, "{}", io::Error::last_os_error());
+        let token = current_token(TOKEN_QUERY).unwrap();
+        let mut other = well_known(WinLocalServiceSid);
+        assert_eq!(
+            is_trusted(token.as_handle(), other.as_mut_ptr().cast()).unwrap(),
+            is_admin != 0
+        );
     }
 
     #[test]
@@ -242,12 +251,13 @@ mod windows {
             Sid: admins.as_mut_ptr().cast(),
             Attributes: 0,
         };
+        let token = current_token(TOKEN_DUPLICATE | TOKEN_QUERY).unwrap();
         let mut restricted: HANDLE = ptr::null_mut();
         // SAFETY: the token is open, disable points at one valid entry, and
         // restricted is a valid place to write.
         let ok = unsafe {
             CreateRestrictedToken(
-                my_token(TOKEN_DUPLICATE | TOKEN_QUERY).as_raw_handle(),
+                token.as_raw_handle(),
                 0,
                 1,
                 &disable,
